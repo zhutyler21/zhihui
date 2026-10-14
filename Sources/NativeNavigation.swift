@@ -279,9 +279,9 @@ struct AppearanceToggleButton: View {
     var body: some View {
         Button { appearanceMode = isDark ? "light" : "dark" } label: {
             Label(actionTitle, systemImage: isDark ? "sun.max.fill" : "moon.fill")
-                .labelStyle(.iconOnly).font(Design.Typography.headline)
-                .frame(width: 28, height: 28)
+                .labelStyle(.iconOnly)
         }
+        .font(Design.Typography.callout)
         .help(actionTitle)
         .accessibilityLabel(actionTitle)
         .accessibilityValue(currentAppearance)
