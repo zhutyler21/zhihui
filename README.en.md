@@ -10,7 +10,7 @@ A native macOS meeting assistant built for Chinese: record audio, transcribe mee
 
 [Releases](https://github.com/zhutyler21/zhihui/releases) · [Quick start](#quick-start) · [Using Zhihui](#using-zhihui) · [Models and data](#models-and-data) · [Development and validation](#development-and-validation) · [Contributor guide](AGENTS.md)
 
-Current version: **0.4.1 / build 15**. Source: [zhutyler21/zhihui](https://github.com/zhutyler21/zhihui). Releases include the validated macOS arm64 App ZIP and checksums. This is a development build that depends on the project directory, not a standalone installer containing Python and model weights. On another Mac, build from source using the instructions below. The distributed App uses **ad-hoc signing and has not been notarized by Apple**. See [release and installation details](docs/发布与安装.md) (Chinese).
+Current version: **0.5.0 / build 16**. Source: [zhutyler21/zhihui](https://github.com/zhutyler21/zhihui). The standalone DMG includes Python, the backend, pinned dependencies, and the audio converter inside the App. You can move the App without retaining the source repository or installing Homebrew. Download the three models explicitly during first-run setup. The App uses **ad-hoc signing and has not been notarized by Apple**. See [release and installation details](docs/发布与安装.md) and [standalone validation records](docs/独立安装验收记录.md) (Chinese).
 
 The current application interface is Chinese. This file provides English documentation; Chinese button labels are included where needed.
 
@@ -31,73 +31,33 @@ The interface uses native sidebars, split views, toolbars, and tables, with sea-
 
 ## Quick start
 
-### 1. Prepare the environment
+### 1. Download and install
 
 | Requirement | Details |
 | --- | --- |
-| Hardware | Apple Silicon Mac; the current build targets `arm64` |
+| Hardware | Apple Silicon Mac; the release targets `arm64` |
 | Operating system | macOS 14 or later |
-| Build tools | Xcode development environment, including command-line tools, and an available Apple Metal Toolchain |
-| Python | Python 3.12 in the project's `.venv` |
-| Environment manager | `uv` |
-| Audio conversion | An installed `ffmpeg` |
-| Storage and network | Approximately 2.61 GB for models, plus dependencies, recordings, and attachments; dependency installation and model downloads require internet access |
+| Runtime | Included in the App; no separate Python, ffmpeg, or Homebrew installation |
+| Storage and network | Approximately 2.61 GB for models, plus the App, recordings, and attachments; first-time model downloads require internet access |
 
-Get the source, then prepare and build from the **repository root**:
+1. Download `Zhihui-v0.5.0-macOS-arm64.dmg` from the [v0.5.0 Release](https://github.com/zhutyler21/zhihui/releases/tag/v0.5.0).
+2. Open the DMG and drag **Zhihui** (`知会`) into its **Applications** folder.
+3. Open the installed App and follow macOS prompts for first-time opening and audio access.
 
-```sh
-git clone https://github.com/zhutyler21/zhihui.git
-cd zhihui
-```
+The App reads its runtime from its current location. Moving the App does not require rebuilding it. Meeting data and models remain in your user data directory rather than moving with the App. See [release and installation details](docs/发布与安装.md) for downloadable files and checksum verification.
 
-```sh
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -r requirements.lock
-bash scripts/build-app.sh
-```
+### 2. Complete first-run setup
 
-The Python commands use [uv's explicit interpreter selection](https://docs.astral.sh/uv/pip/environments/). If the build reports a missing Metal Toolchain, install that component and build again:
-
-```sh
-xcodebuild -downloadComponent MetalToolchain
-```
-
-The result is `dist/知会.app`. The App uses the backend, Python environment, and models through the project path recorded at build time. **Rebuild the App after moving the repository.**
-
-### 2. Install and complete setup
-
-Quit any running Zhihui instance normally before installing:
-
-```sh
-.venv/bin/python scripts/install-app.py
-```
-
-The installer places the App at `~/Applications/知会.app` and backs up an existing build from the same project under `work/installed-app-backups/`. It checks the App identity, project path, and signature, and rejects bundles configured for isolated test data.
-
-Open the App in Finder and proceed from the welcome screen:
+Proceed from the welcome screen:
 
 1. Follow macOS prompts to allow microphone and system audio access.
 2. Select **Download required models** (`下载所需模型`). Existing files are checked offline and reused.
 3. Follow the actual byte progress. Pause a download and select **Continue downloading** (`继续下载`) to resume later.
 4. Once both audio permissions and all three models are ready, select **Enter Zhihui** (`进入知会`). The App checks models and permissions again before entry.
 
-macOS groups system audio access under Screen & System Audio Recording. The current recorder receives and saves audio, not screen images. The App does not automatically reset system permissions.
+Models are stored at `~/Library/Application Support/知会/models/`, outside the App bundle. When the project installer upgrades an existing local development installation, it verifies and copies reusable models against the pinned catalog. Original model files remain in place; upgrading does not force another full download.
 
-### 3. Optional: prepare models from the command line
-
-Models can also be prepared before opening the App:
-
-```sh
-# Download missing or invalid files from the pinned catalog; emit JSON progress lines
-.venv/bin/python scripts/setup-models.py --progress-json
-
-# Check existing files without networking; inspect each model's ready status
-.venv/bin/python scripts/setup-models.py --status-json
-```
-
-Interrupted downloads retain `.partial` files and use range-based resume when the server supports it. Files become available only after size and SHA-256 verification. A successful status-command exit means the check ran; inspect the reported model states to determine readiness.
-
-Running `scripts/setup-models.py` without arguments retains the legacy installation workflow, which generates `models/manifest.json` and collects model license texts. The UI and progress mode use the fixed catalog tracked in this repository.
+macOS groups system audio access under Screen & System Audio Recording. The current recorder receives and saves audio, not screen images. The App does not automatically reset system permissions. Once all three models are ready, everyday transcription, retrieval, and generation can run offline.
 
 ## Using Zhihui
 
@@ -127,11 +87,13 @@ Supported documents include TXT, MD, CSV, JSON, LOG, HTML, text-based PDF, DOCX,
 
 ### Three local models
 
-| Purpose | Model | Runtime | Project directory |
+| Purpose | Model | Runtime | Folder within the model directory |
 | --- | --- | --- | --- |
-| Chinese speech transcription | SenseVoice int8 + Silero VAD | sherpa-onnx / CPU | `models/sensevoice/` |
-| Chinese semantic retrieval | BGE-small-zh-v1.5 | FastEmbed / ONNX Runtime / CPU | `models/bge-small-zh/` |
-| Chinese summaries and answers | Qwen3-4B-Instruct-2507 4bit | MLX / Apple Silicon GPU | `models/qwen3-4b/` |
+| Chinese speech transcription | SenseVoice int8 + Silero VAD | sherpa-onnx / CPU | `sensevoice/` |
+| Chinese semantic retrieval | BGE-small-zh-v1.5 | FastEmbed / ONNX Runtime / CPU | `bge-small-zh/` |
+| Chinese summaries and answers | Qwen3-4B-Instruct-2507 4bit | MLX / Apple Silicon GPU | `qwen3-4b/` |
+
+The standalone model directory is `~/Library/Application Support/知会/models/`. Source-development mode defaults to the repository's `models/` directory.
 
 [ModelCatalog.json](Resources/ModelCatalog.json) pins download sources, revisions, file sizes, and SHA-256 checksums. It currently contains 23 files totaling **2,614,496,485 bytes**, approximately 2.61 GB. Once prepared, transcription, retrieval, and generation use local files without cloud AI calls.
 
@@ -141,8 +103,10 @@ Supported documents include TXT, MD, CSV, JSON, LOG, HTML, text-based PDF, DOCX,
 
 | Content | Default location |
 | --- | --- |
-| Source, dependencies, and models | This repository; `.venv/` and `models/` |
-| Installed App | `~/Applications/知会.app` |
+| Source and development environment | This repository; `.venv/` and development `models/` |
+| Installed App | `/Applications/知会.app` when dragged from the DMG; `~/Applications/知会.app` with the project installer |
+| Standalone runtime | `知会.app/Contents/Resources/Runtime/`, resolved from the current App location |
+| Standalone models and caches | `~/Library/Application Support/知会/models/` |
 | Meeting database | `~/Library/Application Support/知会/database.sqlite` |
 | Recordings and attachment copies | `recordings/` and `attachments/` within the same data directory |
 | Setup completion record | `onboarding.json` within the same data directory |
@@ -179,13 +143,13 @@ The setup screen invokes a separate model preparation process without starting t
 ├── LICENSE                   # MIT project license
 ├── Sources/                  # SwiftUI interface, recording, state, and backend lifecycle
 ├── backend/                  # Extraction, SQLite, indexing, inference, and HTTP service
-├── Resources/                # Metal shader and pinned model catalog
+├── Resources/                # Metal shader, pinned model catalog, and runtime configuration
 ├── scripts/                  # Build, installation, model preparation, and validation
 ├── tests/                    # Python and native Swift regression checks
 ├── docs/                     # Design, interfaces, validation records, and third-party licenses
 ├── requirements.lock         # Pinned Python dependencies
 ├── .venv/                    # Local environment; excluded from Git
-├── models/                   # Model files and caches; excluded from Git
+├── models/                   # Source-development models and caches; excluded from Git
 ├── dist/                     # Built App; excluded from Git
 └── work/                     # Isolated validation artifacts; excluded from Git
 ```
@@ -193,6 +157,54 @@ The setup screen invokes a separate model preparation process without starting t
 ## Development and validation
 
 Read [AGENTS.md](AGENTS.md) before making changes. Some validation scripts and tests contain fixed-path guards for the development machine. When porting them, first establish a separate test root, then adapt the path checks while retaining isolation from everyday data.
+
+### Build the standalone release from source
+
+Development requires Apple Silicon, Xcode with command-line tools, the Apple Metal Toolchain, CMake 3.25 or later, and `uv`. The release runtime uses managed **CPython 3.12.11** and [requirements.lock](requirements.lock); see [StandaloneRuntime.json](Resources/StandaloneRuntime.json) for pinned runtime inputs. The build prepares the runtime and FFmpeg from pinned sources and builds the same MLX version for macOS 14 with precompiled Metal kernels. CMake and compiler tools are needed only when building from source; the installed App does not depend on Homebrew ffmpeg.
+
+Run from the repository root:
+
+```sh
+git clone https://github.com/zhutyler21/zhihui.git
+cd zhihui
+```
+
+```sh
+uv python install 3.12.11
+uv venv --python 3.12.11 --managed-python .venv
+uv pip install --python .venv/bin/python -r requirements.lock
+source .venv/bin/activate
+bash scripts/build-standalone.sh
+python3 scripts/build-dmg.py
+```
+
+These commands use [uv-managed Python](https://docs.astral.sh/uv/concepts/python-versions/) and [explicit interpreter selection](https://docs.astral.sh/uv/pip/environments/). If the build reports a missing Metal Toolchain, install that component and build again:
+
+```sh
+xcodebuild -downloadComponent MetalToolchain
+```
+
+The standalone App is written to `dist/知会.app`; the DMG is written to `dist/`. Quit an existing App normally, then install to `~/Applications/知会.app` with the project installer:
+
+```sh
+python3 scripts/install-app.py
+```
+
+The installer checks App identity, runtime layout, and signing, rejects isolated validation bundles, and retains the previous App under `work/installed-app-backups/`. Old development models are copied to standalone storage only after pinned-catalog verification. Meetings, recordings, and attachments continue to use their original data directory.
+
+`bash scripts/build-app.sh` remains available for a native development bundle that uses the repository's `.venv`, backend, and `models/`. Rebuild that development bundle after moving the repository. Public releases use the standalone build entry point.
+
+### Optional: prepare models in development
+
+```sh
+# Download missing or invalid files from the pinned catalog; emit JSON progress lines
+.venv/bin/python scripts/setup-models.py --progress-json
+
+# Check existing files without networking; inspect each model's ready status
+.venv/bin/python scripts/setup-models.py --status-json
+```
+
+Source mode defaults to repository `models/`. Use `--model-dir` to select a writable model directory. Interrupted downloads retain `.partial` files and resume when the server supports it. Files become available only after size and SHA-256 verification. A successful status-command exit means the check ran; inspect the reported model states for readiness. The no-argument entry retains the legacy installation flow, generating a model `manifest.json` and collecting license texts. The UI and progress mode always use the pinned catalog.
 
 ### Logic and native state checks
 
@@ -203,6 +215,7 @@ bash scripts/test-native-state.sh
 bash scripts/test-onboarding.sh
 bash scripts/test-model-preparation.sh
 bash scripts/test-preflight-shutdown.sh
+bash scripts/test-standalone-runtime-swift.sh
 .venv/bin/python scripts/test-app-icon.py
 ```
 
@@ -219,6 +232,8 @@ Prepared real models are required. `verify-real-app.py` also requires the existi
 
 ### Version-specific validation records
 
+For 0.5.0 / build 16 runtime packaging, relocation, DMG, installation, and data-preservation evidence, see the [standalone validation record](docs/独立安装验收记录.md). The 0.4-series records below retain their original version scope and do not establish acceptance of every feature in this release.
+
 The records for 0.4.0 / build 14 include 42 Python tests, native setup and model-process checks, a build of 22 Swift source files, and isolated native checks of download pause/resume and transcript restoration. See the [welcome and setup validation record](docs/欢迎页验收记录.md) for source bindings, installation checks, and data preservation evidence.
 
 For the appearance shortcut and installation checks in 0.4.1 / build 15, see the [appearance validation record](docs/外观切换验收记录.md), which distinguishes isolated preview checks from the installed App’s permission state.
@@ -232,7 +247,7 @@ Keep validation claims tied to their version and scope: controlled permission se
 | Audio permission setup remains incomplete | Follow macOS prompts manually and return to the App; signature or path changes may trigger permission rechecks. The project does not automatically reset TCC |
 | A model download fails | Read the card's message and check connectivity and free space; retry retains received data and verifies files. Deleting the entire model directory is usually unnecessary |
 | Models are ready, but the first task is slow | The model must load on first use; inspect task progress rather than treating file presence as completed generation |
-| The backend or Python environment cannot be found | Check the repository path and `.venv`; rebuild after moving the repository |
+| The standalone runtime is reported incomplete | Download a complete App again from Releases; avoid replacing individual runtime files. For source-development bundles, check the repository and `.venv`, and rebuild after relocation |
 | The local port is occupied | Identify the conflicting service. Zhihui does not automatically terminate other processes using the port |
 | A document was added but has no searchable text | Inspect its extraction status; run OCR on scanned PDFs or convert unsupported formats to TXT or Markdown |
 | A summary contains an incorrect name or number | Correct the transcript, inspect source citations, and regenerate. Model output still requires human review |
@@ -252,7 +267,8 @@ The detailed project documents and contributor guide below are currently in Chin
 | [Welcome and setup](docs/欢迎与权限引导.md) | First-run setup, model preparation, and entry gates |
 | [Interface design](docs/UI设计升级.md) | Colors, typography, and components |
 | [Welcome visuals](docs/欢迎页视觉.md) | Glass effects and implementation boundaries |
-| [Welcome validation records](docs/欢迎页验收记录.md) | Current and historical validation scope |
+| [Standalone validation records](docs/独立安装验收记录.md) | 0.5.0 runtime, relocation, DMG, and installation evidence |
+| [Welcome validation records](docs/欢迎页验收记录.md) | Welcome and model checks for the 0.4 series |
 | [Interface validation records](docs/界面升级验收记录.md) | Layout and interaction checks |
 | [Earlier integration validation](docs/最终验收记录.md) | Integration checks for earlier versions |
 
@@ -264,6 +280,6 @@ Describe the concrete problem or use case, the resulting behavior, how it was va
 
 The project's code and documentation are licensed under the **[MIT License](LICENSE)**.
 
-The project uses SwiftUI, Metal, SenseVoice / sherpa-onnx, Silero VAD, BGE / FastEmbed, and MLX / Qwen3, among other tools and models. Third-party license texts are in [docs/licenses/](docs/licenses/). SenseVoice tool code and model weights have different licenses and should be reviewed separately.
+The project uses SwiftUI, Metal, SenseVoice / sherpa-onnx, Silero VAD, BGE / FastEmbed, and MLX / Qwen3, among other tools and models. The standalone release also redistributes Python, FFmpeg, and pinned Python dependencies. Third-party license texts are in [docs/licenses/](docs/licenses/). SenseVoice tool code and model weights have different licenses and should be reviewed separately.
 
-Third-party models, weights, and dependencies remain subject to their respective licenses; the project's MIT license does not replace them.
+Third-party notices and license texts are retained inside the App. Releases also include the corresponding source for the distributed FFmpeg and its build-configuration information. Third-party models, weights, and dependencies remain subject to their respective licenses; the project's MIT license does not replace them.

@@ -27,7 +27,12 @@ struct ZhihuiEntry {
     init() {
         let appModel = AppModel()
         _model = StateObject(wrappedValue: appModel)
-        let preparation = ModelPreparation(projectRoot: appModel.host.projectRoot)
+        let preparation = ModelPreparation(projectRoot: appModel.host.projectRoot, modelRoot: appModel.host.modelRoot,
+                                           executable: appModel.host.runtime.python, helper: appModel.host.runtime.modelHelper,
+                                           isolatedPython: appModel.host.runtime.isBundled,
+                                           binaryDirectory: appModel.host.runtime.binaryDirectory,
+                                           certificateFile: appModel.host.runtime.certificateFile,
+                                           runtimeValidation: { try appModel.host.runtime.validate() })
         _models = StateObject(wrappedValue: preparation)
         _setup = StateObject(wrappedValue: OnboardingState(service: SystemSetupPermissions(),
                                                           store: FileSetupCompletionStore(directory: appModel.host.dataRoot),

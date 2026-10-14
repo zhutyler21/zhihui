@@ -13,9 +13,10 @@ from pathlib import Path
 
 
 class LocalModels:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, model_root: Path | None = None, ffmpeg: Path | str | None = None):
         self.root = Path(root).resolve()
-        self.models = self.root / 'models'
+        self.models = self.model_directory(self.root, model_root)
+        self.ffmpeg_path = self.ffmpeg_executable(ffmpeg, root=self.root)
         os.environ['HF_HOME'] = str(self.models / '.hf-cache')
         os.environ['HF_HUB_OFFLINE'] = '1'
         os.environ['TRANSFORMERS_OFFLINE'] = '1'
@@ -29,6 +30,29 @@ class LocalModels:
         self._asr_lock = threading.Lock()
         self._embed_lock = threading.Lock()
         self._llm_lock = threading.Lock()
+
+    @staticmethod
+    def app_bundle(root: Path) -> Path | None:
+        root = Path(root).resolve()
+        return next((location for location in (root, *root.parents) if location.suffix.lower() == '.app'), None)
+
+    @staticmethod
+    def model_directory(root: Path, explicit: Path | None = None) -> Path:
+        root = Path(root).resolve()
+        selected = Path(explicit).expanduser().resolve() if explicit is not None else root / 'models'
+        bundle = LocalModels.app_bundle(root)
+        if bundle is not None and selected.is_relative_to(bundle):
+            raise RuntimeError('模型目录必须位于应用之外，请重新安装知会。')
+        return selected
+
+    @staticmethod
+    def ffmpeg_executable(explicit: Path | str | None = None, *, root: Path | None = None) -> str:
+        # A supplied bundle executable must never fall back to a different system install.
+        if explicit is None and root is not None:
+            if LocalModels.app_bundle(root) is not None:
+                raise RuntimeError('应用内音频工具未配置，请重新安装知会。')
+        selected = explicit if explicit is not None else shutil.which('ffmpeg') or '/opt/homebrew/bin/ffmpeg'
+        return str(Path(selected).expanduser().resolve())
 
     def status(self) -> dict:
         return {
@@ -83,8 +107,10 @@ class LocalModels:
             raise RuntimeError('找不到音频文件。')
         if not self.status()['asr']['ready']:
             raise RuntimeError('本地转写模型未准备，请运行项目的模型安装脚本。')
-        ffmpeg = shutil.which('ffmpeg') or '/opt/homebrew/bin/ffmpeg'
-        if not Path(ffmpeg).is_file():
+        ffmpeg = self.ffmpeg_path
+        if not Path(ffmpeg).is_file() or not os.access(ffmpeg, os.X_OK):
+            if self.app_bundle(self.root) is not None:
+                raise RuntimeError('音频转换工具无法运行，请重新安装知会。')
             raise RuntimeError('音频转换工具未安装。请先安装 ffmpeg。')
         # Stream audio decoding to bound memory and allow cancellation on long files.
         process = subprocess.Popen(

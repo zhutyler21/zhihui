@@ -1,0 +1,17 @@
+{
+  "package": "et-xmlfile",
+  "version": "2.0.0",
+  "pypi_url": "https://pypi.org/project/et-xmlfile/2.0.0/",
+  "source_url": "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz",
+  "source_sha256": "dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54",
+  "files": [
+    {
+      "path": "LICENCE.python",
+      "sha256": "4ccdaaebc0f44b83720ec0399bb7ab329adce067dd62f73c5535a2dc05628ab2"
+    },
+    {
+      "path": "LICENCE.rst",
+      "sha256": "0c84bb42f5d367e5ebf9fc2dde35b16141df5ee0fdc189250858bc6c5560f69e"
+    }
+  ]
+}

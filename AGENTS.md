@@ -12,7 +12,8 @@
 - 日常安装位置：`~/Applications/知会.app`。
 - 日常资料：`~/Library/Application Support/知会/`；默认服务端口 `8768`。
 - 项目版本以 `scripts/build-app.sh` 为准；安装状态核对实际应用 `Info.plist`，不要只看 README 或历史记录。
-- 模型清单：`Resources/ModelCatalog.json`；依赖：`requirements.lock`。
+- 模型清单：`Resources/ModelCatalog.json`；依赖：`requirements.lock`；独立版运行配置：`Resources/StandaloneRuntime.json`。
+- 独立版模型与缓存位于 `~/Library/Application Support/知会/models/`；源码开发模式默认仓库 `models/`。DMG 通常拖入 `/Applications/`，项目安装器仍使用 `~/Applications/`。
 - `work/`、`models/`、`.venv/` 与 `dist/` 为本地目录，不提交 Git。
 - GitHub 发布地址为 `zhutyler21/zhihui`。此前本机开发历史与私人资料只保留本地。只发布 `main` 和明确的发行标签，不使用 `git push --all` 或批量推送本机历史分支。
 - 本项目代码与文档采用根目录 `LICENSE` 中的 MIT 许可；第三方模型、权重与依赖保留各自许可。
@@ -30,10 +31,12 @@
 | 应用状态 | `AppModel.swift`、`StateMachines.swift`、`Models.swift` | 选择、异步请求、任务及数据映射 |
 | 音频 | `Recorder.swift`、`AudioImportSpool.swift` | 录音、片段与导入副本 |
 | 服务生命周期 | `Sources/API.swift` | 本机鉴权、服务身份与拥有的子进程 |
+| 独立运行路径 | `Sources/RuntimePaths.swift`、`scripts/run-backend.py` | 应用内运行组件、外部资料与模型目录、隔离 Python 启动 |
+| 独立包与 DMG | `scripts/build-standalone.sh`、`build-standalone.py`、`build-ffmpeg.py`、`audit-standalone.py`、`build-dmg.py` | 固定运行环境、依赖审计、签名、安装映像与校验 |
 | 后端 | `backend/server.py`、`store.py` | API、作业、SQLite、范围检索与恢复 |
 | 资料与模型 | `backend/documents.py`、`engines.py`、`prompts.py` | 文字读取、本地推理与生成约束 |
 
-表中省略目录的 Swift 文件均在 `Sources/`，Python 后端文件均在 `backend/`。
+表中省略目录的 Swift 文件均在 `Sources/`，Python 后端文件均在 `backend/`，构建工具均在 `scripts/`。
 
 ## 工作方式
 
@@ -53,7 +56,7 @@
 - 开发和验证使用项目内独立的 `work/<本次任务>/` 资料目录及明确端口，不使用日常会议做测试。
 - 在创建测试资料、导入产品模块或连接测试数据库前，核对规范根目录、目录包含关系与实际数据库配置。
 - 测试涉及多个会议时，先完整验证整批合成会议的名称、唯一 ID 和角色，再访问数据；不得逐项接受未校验的元数据。
-- 核对服务时检查应用身份、版本、`project_root`、`data_dir` 和鉴权，不把端口可连接当作服务身份正确。
+- 核对服务时检查应用身份、版本、`project_root`、`models_dir`、`ffmpeg_path`、`data_dir` 和鉴权，不把端口可连接当作服务身份正确。
 - 修改真实资料之前，保留合适的备份；保留用户的新操作，用本次即时快照核对，不拿更早备份覆盖资料。
 - 不记录或提交会议正文、原始录音、附件、访问令牌、密码、用户数据库和本地验证产物。
 
@@ -84,6 +87,16 @@
 - 异步结果绑定发起时的会议、范围与请求标识；选择改变后，旧请求不能覆盖新的界面状态。
 - 保存草稿、快速切换、重复点击、取消、退出与重开都应保留正确的状态与数据。
 - 取消仅停止自己拥有的任务与子进程，等待退出并做有限清理，不留后台进程，也不误伤后续重试。
+
+### 独立发布包与运行目录
+
+- 正式包通过 `scripts/build-standalone.sh` 构建，运行环境位于 App 的 `Contents/Resources/Runtime/`，包含固定 Python、后端、模型助手、模型清单和 FFmpeg。源码开发包保留项目 `.venv` 布局，两种模式明确区分。
+- 正式包从当前 Bundle 位置解析运行文件；不得重新引入个人电脑绝对路径、外部 `.venv`、Homebrew 运行库或缺失组件的静默回退。
+- 运行环境保持不写入。资料、模型、HF 与检索缓存、下载临时文件均使用应用外的可写目录。打包 Python 以隔离且不生成字节码的方式启动，HTTPS 信任使用包内证书文件。
+- 用户移动 App 后仍应正确启动，服务身份同时绑定当前运行目录、模型目录、音频工具、资料目录与令牌；旧服务身份不符时不能当作本版服务复用。
+- 升级旧开发版的模型只按固定清单验证后复制，不移动或删除原权重，不复制未核验的任意文件。日常会议资料保留，验证仍使用隔离目录。
+- 发布前审计所有原生组件的实际系统最低版本、外部依赖与签名。系统要求以最终包审计为准，不把主 Swift 文件的编译目标当作全部依赖的最低系统版本。
+- App 分发第三方运行环境与依赖时保留许可和元数据。FFmpeg 同步提供对应源码与构建配置；本项目 MIT 许可不替代第三方许可。
 
 ### 本地模型与进入门禁
 
@@ -132,7 +145,10 @@ npx ctx7@latest docs <返回的库ID> "同一具体问题"
 | 应用图标 | `.venv/bin/python scripts/test-app-icon.py` |
 | 真实模型、鉴权 API 与持久化 | `.venv/bin/python scripts/verify-real-app.py` |
 | 摘要证据与数字准确性 | `.venv/bin/python scripts/verify-summary-quality.py` |
-| 正式包构建与签名 | `bash scripts/build-app.sh` |
+| 原生开发包构建 | `bash scripts/build-app.sh` |
+| 独立运行路径 | `bash scripts/test-standalone-runtime-swift.sh` |
+| 正式包构建、审计与签名 | `bash scripts/build-standalone.sh` |
+| DMG 打包 | `python3 scripts/build-dmg.py` |
 
 真实模型集成检查需要已准备的模型；`verify-real-app.py` 还需要 `work/中文会议验收.aiff`。部分脚本含本机路径保护，移植前先适配合法测试目录，不删除隔离约束来让检查通过。
 
@@ -156,5 +172,5 @@ npx ctx7@latest docs <返回的库ID> "同一具体问题"
 - 功能变化同步更新对应 `docs/`；新增结论标明版本和证据，保留早期记录的原范围。
 - 不虚构 Star、CI 徽章、跨设备测试、性能指标、开源 LICENSE 或官方背书。代码与模型的许可分别说明。
 - 发布仓库、创建远程或更改代码许可须在用户授权范围内执行。维护现有 MIT 许可与第三方许可说明，发布前检查脱敏与归档范围。
-- 发布应用必须写清环境依赖、签名/公证状态和跨机器限制，并核对上传附件与已验证包。没有独立安装环境时，不能把开发版 App 描述成下载即可使用的完整安装包。
+- 发布应用必须写清独立版与开发包的区别、模型首次下载、实际系统要求、签名/公证状态和跨机器验证范围，并核对 DMG、App 与校验清单。可移动运行和签名校验不等于 Apple 公证，也不代表所有设备均已验证。独立包的最终证据写入对应版本的验收记录。
 - `AGENTS.me` 仅为本文件入口；完整规则统一维护在 `AGENTS.md`，避免重复。

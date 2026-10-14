@@ -20,7 +20,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODEL_ROOT = ROOT / 'models'
-os.environ['HF_HOME'] = str(MODEL_ROOT / '.hf-cache')
 os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 os.environ['DO_NOT_TRACK'] = '1'
 os.environ['HF_HUB_DISABLE_XET'] = '1'
@@ -101,19 +100,20 @@ def ensure_sensevoice(destination, source=None):
         temporary.replace(destination / 'silero_vad.onnx')
 
 
-def legacy_main():
+def legacy_main(model_root=None):
     """Retain the existing full command-line installer and license collection."""
     from huggingface_hub import snapshot_download
-    MODEL_ROOT.mkdir(parents=True, exist_ok=True)
+    destination_root = Path(model_root) if model_root is not None else MODEL_ROOT
+    destination_root.mkdir(parents=True, exist_ok=True)
     manifest = []
     for repo, revision, folder, patterns in MODELS:
-        destination = MODEL_ROOT / folder
+        destination = destination_root / folder
         print(f'下载 {repo} 到 {destination}', flush=True)
         snapshot_download(repo, revision=revision, local_dir=destination,
                           allow_patterns=patterns, max_workers=3, token=False)
         manifest.append({'repo': repo, 'revision': revision, 'folder': folder})
     source = Path.home() / '我的项目仓库/Foresight中文支持/models/sensevoice'
-    voice = MODEL_ROOT / 'sensevoice'
+    voice = destination_root / 'sensevoice'
     ensure_sensevoice(voice, source)
     manifest.append({'repo': 'k2-fsa/sherpa-onnx asr-models', 'folder': 'sensevoice',
                      'package': 'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17',
@@ -127,7 +127,7 @@ def legacy_main():
         'Sherpa-APACHE-2.0.txt': 'https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/master/LICENSE',
         'Silero-MIT.txt': 'https://raw.githubusercontent.com/snakers4/silero-vad/master/LICENSE',
     }
-    licenses = ROOT / 'docs/licenses'
+    licenses = destination_root / 'licenses' if model_root is not None else ROOT / 'docs/licenses'
     licenses.mkdir(parents=True, exist_ok=True)
     for name, url in notices.items():
         try:
@@ -137,12 +137,12 @@ def legacy_main():
             print(f'许可文本获取失败 {url}: {error}', flush=True)
     for item in manifest:
         item['files'] = [
-            {'path': str(path.relative_to(MODEL_ROOT)), 'size': path.stat().st_size,
+            {'path': str(path.relative_to(destination_root)), 'size': path.stat().st_size,
              'sha256': hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()}
-            for path in sorted((MODEL_ROOT / item['folder']).rglob('*'))
+            for path in sorted((destination_root / item['folder']).rglob('*'))
             if path.is_file() and '.cache' not in path.parts
         ]
-    (MODEL_ROOT / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
+    (destination_root / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
     print('模型准备完成。应用推理只读取这些本地文件。', flush=True)
 
 
@@ -210,17 +210,27 @@ def load_catalog():
     return catalog
 
 
+def validate_model_directory(model_root):
+    """A bundled launcher must select writable storage outside its signed app."""
+    selected = Path(model_root).resolve()
+    for location in (ROOT, *ROOT.parents):
+        if location.suffix.lower() == '.app':
+            if selected.is_relative_to(location):
+                raise DownloadError('模型目录必须位于应用之外，请重新安装知会。')
+            break
+
+
 class ModelDownloader:
     """Offline verified status plus cancellable, byte-counted pinned downloads.
 
-    Explicit catalog/root/opener injection exists only for library fixture tests.
-    Public CLI arguments cannot change these production boundaries.
+    Catalog/opener injection exists only for library fixture tests. The CLI may choose
+    its writable model directory but cannot alter the pinned production downloads.
     """
     CHUNK_SIZE = 64 * 1024
     IDS = ('asr', 'embedding', 'llm')
 
     def __init__(self, catalog, model_root, *, emit=None, opener=None, cancellation=None):
-        self.root = Path(model_root).absolute()
+        self.root = Path(model_root).expanduser().absolute()
         self.emit = emit or (lambda event: None)
         self.opener = opener or urllib.request.urlopen
         self.cancellation = cancellation or CancellationToken()
@@ -429,10 +439,17 @@ def main(argv=None, *, catalog=None, model_root=None, opener=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--status-json', action='store_true', help='离线校验模型；只输出 NDJSON 状态')
     mode.add_argument('--progress-json', action='store_true', help='下载缺失模型；输出真实字节 NDJSON 进度')
+    parser.add_argument('--model-dir', type=Path, help='可写的模型与下载缓存目录；默认使用项目 models 目录')
     args = parser.parse_args(argv)
+    selected_root = (Path(model_root) if model_root is not None else args.model_dir or MODEL_ROOT).expanduser().absolute()
+    os.environ['HF_HOME'] = str(selected_root / '.hf-cache')
     if not args.status_json and not args.progress_json:
-        with download_lock(MODEL_ROOT):
-            legacy_main()
+        validate_model_directory(selected_root)
+        with download_lock(selected_root):
+            if model_root is not None or args.model_dir is not None:
+                legacy_main(selected_root)
+            else:
+                legacy_main()
         return 0
 
     def emit(event):
@@ -448,10 +465,11 @@ def main(argv=None, *, catalog=None, model_root=None, opener=None):
         raise DownloadCancelled()
 
     try:
+        validate_model_directory(selected_root)
         for number in (signal.SIGTERM, signal.SIGINT):
             previous_handlers[number] = signal.signal(number, cancel_signal)
         engine = ModelDownloader(catalog if catalog is not None else load_catalog(),
-                                 model_root if model_root is not None else MODEL_ROOT,
+                                 selected_root,
                                  emit=emit, opener=opener, cancellation=token)
         engine.run(download=args.progress_json)
         return 0

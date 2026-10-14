@@ -23,8 +23,8 @@ root, app = sys.argv[1:]
 info = {
     'CFBundleName': '知会', 'CFBundleDisplayName': '知会',
     'CFBundleIdentifier': 'io.local.zhihui.meetings', 'CFBundleExecutable': '知会',
-    'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.4.1',
-    'CFBundleVersion': '15', 'LSMinimumSystemVersion': '14.0',
+    'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '0.5.0',
+    'CFBundleVersion': '16', 'LSMinimumSystemVersion': '14.0',
     'CFBundleIconFile': 'AppIcon',
     'CFBundleDevelopmentRegion': 'zh-Hans', 'CFBundleLocalizations': ['zh-Hans'],
     'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',

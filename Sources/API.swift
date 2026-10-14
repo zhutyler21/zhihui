@@ -26,32 +26,28 @@ final class APIClient {
 
 @MainActor
 final class BackendHost {
-    let projectRoot: URL; let dataRoot: URL; let port: Int
+    let projectRoot: URL; let dataRoot: URL; let modelRoot: URL; let port: Int
+    let runtime: RuntimePaths
     private var child: Process?; private var output: FileHandle?
     private var generation: UInt64 = 0
     var childPID: Int32? { child?.isRunning == true ? child?.processIdentifier : nil }
     private(set) var client: APIClient?
-    init() {
-        let env = ProcessInfo.processInfo.environment
-        let root = env["ZHIHUI_PROJECT_ROOT"] ?? Bundle.main.object(forInfoDictionaryKey: "ZhihuiProjectRoot") as? String ?? ""
-        projectRoot = URL(fileURLWithPath: root, isDirectory: true)
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let configuredData = env["ZHIHUI_DATA_DIR"] ?? Bundle.main.object(forInfoDictionaryKey: "ZhihuiDataDirectory") as? String
-        dataRoot = configuredData.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? support.appendingPathComponent("知会", isDirectory: true)
-        port = Int(env["ZHIHUI_PORT"] ?? "") ?? (Bundle.main.object(forInfoDictionaryKey: "ZhihuiPort") as? NSNumber)?.intValue ?? 8768
+    init(paths: RuntimePaths = RuntimePaths()) {
+        runtime = paths
+        projectRoot = paths.projectRoot; dataRoot = paths.dataRoot; modelRoot = paths.modelRoot; port = paths.port
     }
-    private func verify(_ health: JSONObject) throws {
+    func verify(_ health: JSONObject) throws {
         guard health["ok"] as? Bool == true, health["app"] as? String == "zhihui", Int(number(health["version"])) == 1,
-              let dir = health["data_dir"] as? String, URL(fileURLWithPath: dir).standardizedFileURL == dataRoot.standardizedFileURL,
-              let root = health["project_root"] as? String, URL(fileURLWithPath: root).standardizedFileURL == projectRoot.standardizedFileURL else {
-            throw APIError(message: "本地端口被其他服务占用，或服务版本、项目与资料目录不一致。请关闭冲突服务后重试。")
+              let dir = health["data_dir"] as? String, URL(fileURLWithPath: dir).resolvingSymlinksInPath().path == dataRoot.resolvingSymlinksInPath().path,
+              let root = health["project_root"] as? String, URL(fileURLWithPath: root).resolvingSymlinksInPath().path == projectRoot.resolvingSymlinksInPath().path,
+              let models = health["models_dir"] as? String, URL(fileURLWithPath: models).resolvingSymlinksInPath().path == modelRoot.resolvingSymlinksInPath().path,
+              runtime.ffmpeg == nil || (health["ffmpeg_path"] as? String).map({ URL(fileURLWithPath: $0).resolvingSymlinksInPath().path == runtime.ffmpeg?.resolvingSymlinksInPath().path }) == true else {
+            throw APIError(message: "本地端口被其他服务占用，或服务版本、运行环境、模型与资料目录不一致。请关闭冲突服务后重试。")
         }
     }
     func start() async throws -> JSONObject {
         let launchGeneration = generation
-        guard FileManager.default.fileExists(atPath: projectRoot.appendingPathComponent("backend/server.py").path) else {
-            throw APIError(message: "找不到项目后端，请从项目重新构建应用。")
-        }
+        try runtime.validate()
         try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dataRoot.path)
         let tokenURL = dataRoot.appendingPathComponent("api-token")
@@ -75,15 +71,24 @@ final class BackendHost {
             throw APIError(message: "本地端口 \(port) 已被其他服务占用，无法安全启动。")
         }
         if let child, child.isRunning { return try await waitForHealth(api, generation: launchGeneration) }
-        let python = projectRoot.appendingPathComponent(".venv/bin/python3")
-        guard FileManager.default.isExecutableFile(atPath: python.path) else { throw APIError(message: "本地 Python 环境尚未安装（项目 .venv）。") }
         let logURL = dataRoot.appendingPathComponent("backend.log")
         if !FileManager.default.fileExists(atPath: logURL.path) { FileManager.default.createFile(atPath: logURL.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
         let log = try FileHandle(forWritingTo: logURL); try log.seekToEnd(); output = log
-        let process = Process(); process.executableURL = python; process.currentDirectoryURL = projectRoot
-        process.arguments = ["-m", "backend.server", "--port", String(port), "--data-dir", dataRoot.path, "--token-file", tokenURL.path]
+        let process = Process(); process.executableURL = runtime.python; process.currentDirectoryURL = projectRoot
+        let entry = runtime.isBundled ? ["-I", "-B", "-u", runtime.backendLauncher.path] : ["-u", "-m", "backend.server"]
+        process.arguments = entry + ["--port", String(port), "--data-dir", dataRoot.path, "--models-dir", modelRoot.path, "--token-file", tokenURL.path]
+        if let ffmpeg = runtime.ffmpeg { process.arguments?.append(contentsOf: ["--ffmpeg", ffmpeg.path]) }
         var environment = ProcessInfo.processInfo.environment
-        environment["PYTHONUNBUFFERED"] = "1"; environment["PYTHONPATH"] = projectRoot.path
+        if let binaryDirectory = runtime.binaryDirectory {
+            environment = environment.filter { !$0.key.hasPrefix("PYTHON") && !$0.key.hasPrefix("DYLD_") && $0.key != "VIRTUAL_ENV" && $0.key != "__PYVENV_LAUNCHER__" }
+            environment["PATH"] = binaryDirectory.path + ":/usr/bin:/bin"
+            environment["SSL_CERT_FILE"] = runtime.certificateFile?.path
+            environment.removeValue(forKey: "SSL_CERT_DIR")
+            environment.removeValue(forKey: "REQUESTS_CA_BUNDLE")
+            environment.removeValue(forKey: "CURL_CA_BUNDLE")
+        } else {
+            environment["PYTHONPATH"] = projectRoot.path
+        }
         // The model layer is offline; prevent implicit model-hub downloads as an extra guard.
         environment["HF_HUB_OFFLINE"] = "1"; environment["TRANSFORMERS_OFFLINE"] = "1"
         process.environment = environment; process.standardOutput = log; process.standardError = log

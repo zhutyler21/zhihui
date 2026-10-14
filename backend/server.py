@@ -141,9 +141,11 @@ class Jobs:
 
 
 class Application:
-    def __init__(self, data_dir, models=None, root=ROOT):
+    def __init__(self, data_dir, models=None, root=ROOT, *, model_root=None, ffmpeg=None):
         self.root = Path(root).resolve()
-        self.models = models or LocalModels(self.root)
+        self.models_dir = LocalModels.model_directory(self.root, model_root)
+        self.ffmpeg_path = LocalModels.ffmpeg_executable(ffmpeg, root=self.root)
+        self.models = models if models is not None else LocalModels(self.root, self.models_dir, self.ffmpeg_path)
         self.store = Store(data_dir,self.models)
         self.jobs = Jobs(self.store,self.models)
         # A failed or interrupted local index can be retried after models become ready.
@@ -357,7 +359,9 @@ class APIHandler(BaseHTTPRequestHandler):
     def route(self, method, route, query, payload):
         app,store = self.server.app,self.server.app.store
         if route == ['api','health'] and method == 'GET':
-            return {'ok':True,'app':'zhihui','version':1,'project_root':str(app.root),'models':app.models.status(),'data_dir':str(store.data_dir)}
+            return {'ok':True,'app':'zhihui','version':1,'project_root':str(app.root),
+                    'models_dir':str(app.models_dir),'ffmpeg_path':app.ffmpeg_path,
+                    'models':app.models.status(),'data_dir':str(store.data_dir)}
         if route == ['api','meetings']:
             if method == 'GET':
                 return {'items':store.list_meetings(query.get('trash',['0'])[0]=='1')}
@@ -432,9 +436,9 @@ class APIHandler(BaseHTTPRequestHandler):
     do_PATCH = dispatch
 
 
-def make_server(port, data_dir, token_file, models=None, root=ROOT):
+def make_server(port, data_dir, token_file, models=None, root=ROOT, *, model_root=None, ffmpeg=None):
     token = load_token(token_file)
-    app = Application(data_dir,models,root)
+    app = Application(data_dir,models,root,model_root=model_root,ffmpeg=ffmpeg)
     try:
         server = ThreadingHTTPServer(('127.0.0.1',port),APIHandler)
     except BaseException:
@@ -445,14 +449,16 @@ def make_server(port, data_dir, token_file, models=None, root=ROOT):
     return server
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description='知会本地 API，仅监听 127.0.0.1。')
     parser.add_argument('--port',type=int,default=8768)
     parser.add_argument('--data-dir',type=Path,default=Path.home()/'Library/Application Support/知会')
     parser.add_argument('--token-file',type=Path)
-    args = parser.parse_args()
+    parser.add_argument('--models-dir',type=Path,help='可写的本地模型与缓存目录；默认使用项目 models 目录')
+    parser.add_argument('--ffmpeg',type=Path,help='音频转换工具的明确路径；指定后不使用系统备用工具')
+    args = parser.parse_args(argv)
     token_file = args.token_file or args.data_dir/'api-token'
-    server = make_server(args.port,args.data_dir,token_file)
+    server = make_server(args.port,args.data_dir,token_file,model_root=args.models_dir,ffmpeg=args.ffmpeg)
 
     def stop(signum,frame):
         threading.Thread(target=server.shutdown,daemon=True).start()

@@ -12,7 +12,7 @@ xcrun swiftc -swift-version 5 -D MARKDOWN_APP_MODEL_TESTS -target arm64-apple-ma
   -module-cache-path "$BUILD_ROOT/module-cache" \
   -framework SwiftUI -framework AppKit -framework AVFoundation -framework ScreenCaptureKit -framework CoreMedia \
   "$PROJECT_ROOT/Sources/MarkdownDocument.swift" "$PROJECT_ROOT/Sources/Models.swift" \
-  "$PROJECT_ROOT/Sources/API.swift" "$PROJECT_ROOT/Sources/StateMachines.swift" \
+  "$PROJECT_ROOT/Sources/RuntimePaths.swift" "$PROJECT_ROOT/Sources/API.swift" "$PROJECT_ROOT/Sources/StateMachines.swift" \
   "$PROJECT_ROOT/Sources/AudioImportSpool.swift" "$PROJECT_ROOT/Sources/AppModel.swift" \
   "$PROJECT_ROOT/Sources/Recorder.swift" "$PROJECT_ROOT/Sources/NativeAudioTests.swift" \
   "$PROJECT_ROOT/tests/MarkdownTests.swift" -o "$BUILD_ROOT/MarkdownAppModelTests"
@@ -25,7 +25,7 @@ ZHIHUI_NATIVE_TEST_ROOT="$BUILD_ROOT/spool" ZHIHUI_TEST_DIR="$BUILD_ROOT/audio" 
   "$BUILD_ROOT/MarkdownAppModelTests" "$TEST_PORT" 2>&1 | tee "$BUILD_ROOT/result.log"
 shasum -a 256 "$PROJECT_ROOT/Sources/MarkdownDocument.swift" "$PROJECT_ROOT/Sources/MarkdownNotesView.swift" \
   "$PROJECT_ROOT/Sources/MarkdownRendering.swift" "$PROJECT_ROOT/Sources/Models.swift" \
-  "$PROJECT_ROOT/Sources/API.swift" "$PROJECT_ROOT/Sources/StateMachines.swift" \
+  "$PROJECT_ROOT/Sources/RuntimePaths.swift" "$PROJECT_ROOT/Sources/API.swift" "$PROJECT_ROOT/Sources/StateMachines.swift" \
   "$PROJECT_ROOT/Sources/AudioImportSpool.swift" "$PROJECT_ROOT/Sources/AppModel.swift" \
   "$PROJECT_ROOT/Sources/Recorder.swift" "$PROJECT_ROOT/Sources/NativeAudioTests.swift" \
   "$PROJECT_ROOT/tests/MarkdownTests.swift" "$PROJECT_ROOT/tests/native-delay-server.py" \

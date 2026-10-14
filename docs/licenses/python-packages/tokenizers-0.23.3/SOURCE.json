@@ -1,0 +1,13 @@
+{
+  "package": "tokenizers",
+  "version": "0.23.3",
+  "pypi_url": "https://pypi.org/project/tokenizers/0.23.3/",
+  "source_url": "https://files.pythonhosted.org/packages/e0/7c/2cabb2174e772636683008f2c5621949b645da7d303c596589e84516a184/tokenizers-0.23.3.tar.gz",
+  "source_sha256": "cded33237c77caeef62944d32aa9a7ef42bdce2b3497e18d137e072a8c4be438",
+  "files": [
+    {
+      "path": "tokenizers__LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "mlx_version": "0.32.3",
+  "mlx_source_commit": "64ea011cb65f14d9ce2737e60db9a4ae91ed7441",
+  "dependencies": [
+    {
+      "name": "fmt",
+      "version": "12.1.0",
+      "tag": "12.1.0",
+      "repository": "https://github.com/fmtlib/fmt.git",
+      "commit": "407c905e45ad75fc29bf0f9bb7c5c2fd3475976f",
+      "license": "MIT with optional embedded-code exception",
+      "license_file": "fmt-LICENSE",
+      "license_sha256": "07580f2a3b35709ce703d523f447b242f6dfec7582a8c0df102c7fa2849375f8",
+      "license_source_url": "https://github.com/fmtlib/fmt/blob/407c905e45ad75fc29bf0f9bb7c5c2fd3475976f/LICENSE"
+    },
+    {
+      "name": "nanobind",
+      "version": "3.0.1",
+      "tag": "v3.0.1",
+      "repository": "https://github.com/wjakob/nanobind.git",
+      "commit": "db4827f06f6f1680e5d4004c95fc8d69299dba8b",
+      "license": "BSD-3-Clause",
+      "license_file": "nanobind-LICENSE",
+      "license_sha256": "f305091a4e57805870b217a28ea4b1f16610eece8457d2370f822a9696b75836",
+      "license_source_url": "https://github.com/wjakob/nanobind/blob/db4827f06f6f1680e5d4004c95fc8d69299dba8b/LICENSE"
+    },
+    {
+      "name": "robin-map",
+      "version": "1.4.0",
+      "tag": "v1.4.0",
+      "repository": "https://github.com/Tessil/robin-map",
+      "commit": "4ec1bf19c6a96125ea22062f38c2cf5b958e448e",
+      "license": "MIT",
+      "license_file": "robin-map-LICENSE",
+      "license_sha256": "11f2c685ba565a31aef1219f63a7a8845602c97bff70016b9e3278dfe51a2ec5",
+      "license_source_url": "https://github.com/Tessil/robin-map/blob/4ec1bf19c6a96125ea22062f38c2cf5b958e448e/LICENSE",
+      "parent_dependency": "nanobind",
+      "parent_commit": "db4827f06f6f1680e5d4004c95fc8d69299dba8b",
+      "submodule_path": "ext/robin_map"
+    }
+  ]
+}

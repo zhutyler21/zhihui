@@ -7,7 +7,7 @@ mkdir -p "$OUTPUT_ROOT/module-cache" "$OUTPUT_ROOT/missing-project"
 xcrun swiftc -swift-version 5 -target arm64-apple-macosx14.0 -module-cache-path "$OUTPUT_ROOT/module-cache" \
   -framework SwiftUI -framework AppKit -framework AVFoundation -framework ScreenCaptureKit -framework CoreMedia \
   "$PROJECT_ROOT/Sources/MarkdownDocument.swift" "$PROJECT_ROOT/Sources/Models.swift" \
-  "$PROJECT_ROOT/Sources/API.swift" "$PROJECT_ROOT/Sources/StateMachines.swift" \
+  "$PROJECT_ROOT/Sources/RuntimePaths.swift" "$PROJECT_ROOT/Sources/API.swift" "$PROJECT_ROOT/Sources/StateMachines.swift" \
   "$PROJECT_ROOT/Sources/AudioImportSpool.swift" "$PROJECT_ROOT/Sources/AppModel.swift" \
   "$PROJECT_ROOT/Sources/Recorder.swift" "$PROJECT_ROOT/Sources/NativeAudioTests.swift" \
   "$PROJECT_ROOT/tests/PreflightShutdownTests.swift" -o "$OUTPUT_ROOT/PreflightShutdownTests"

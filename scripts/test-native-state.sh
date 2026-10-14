@@ -5,7 +5,7 @@ RUN_ROOT="$PROJECT_ROOT/work/native-regressions/$(date +%Y%m%d-%H%M%S)-$$"
 mkdir -p "$RUN_ROOT"
 xcrun swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macosx14.0 \
   -framework SwiftUI -framework AppKit -framework AVFoundation -framework ScreenCaptureKit -framework CoreMedia \
-  "$PROJECT_ROOT/Sources/Models.swift" "$PROJECT_ROOT/Sources/API.swift" \
+  "$PROJECT_ROOT/Sources/Models.swift" "$PROJECT_ROOT/Sources/RuntimePaths.swift" "$PROJECT_ROOT/Sources/API.swift" \
   "$PROJECT_ROOT/Sources/StateMachines.swift" "$PROJECT_ROOT/Sources/AudioImportSpool.swift" \
   "$PROJECT_ROOT/Sources/AppModel.swift" \
   "$PROJECT_ROOT/Sources/Recorder.swift" "$PROJECT_ROOT/Sources/NativeAudioTests.swift" \
