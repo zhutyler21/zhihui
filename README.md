@@ -1,5 +1,7 @@
 # 知会 · Zhihui
 
+简体中文 · [English](README.en.md)
+
 **把一次讨论，变成可以回看、编辑和提问的知识。**
 
 面向中文会议的 macOS 原生应用：录音、转写、Markdown 笔记、中文纪要与带原文引用的问答，都在本机完成。SwiftUI 提供系统质感的工作界面，SenseVoice、BGE 与 Qwen3 负责本地 AI。
@@ -171,6 +173,7 @@ flowchart LR
 .
 ├── AGENTS.md                 # 开发协作规则与验证要求
 ├── README.md                 # 项目入口
+├── README.en.md              # 英文项目介绍与使用说明
 ├── Sources/                  # SwiftUI 界面、录音、状态与后端生命周期
 ├── backend/                  # 资料读取、SQLite、索引、推理与 HTTP 服务
 ├── Resources/                # Metal 着色器与固定模型清单
