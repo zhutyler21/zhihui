@@ -79,6 +79,7 @@ struct RootView: View {
             Button { model.modelDetails.toggle() } label: { Label("本地模型", systemImage: "cpu") }
                 .font(Design.Typography.callout).help("查看本地模型状态")
                 .popover(isPresented: $model.modelDetails) { ModelStatusView(model: model) }
+            AppearanceToggleButton()
         }
     }
     private var startup: some View {
@@ -173,18 +174,13 @@ struct SidebarView: View {
             .accessibilityValue(model.section == .trash ? "已选中" : "")
             .help("查看和恢复已删除的会议与资料；单段转写在会议内管理")
             .padding(.horizontal, 12).padding(.bottom, 14)
-            HStack(alignment: .center, spacing: 8) {
-                Label(modelStatusLabel, systemImage: "internaldrive")
-                    .font(Design.Typography.caption.weight(.medium)).foregroundStyle(modelStatusColor)
-                    .lineLimit(1)
-                    .help("本机处理 · \(model.ready ? model.modelCaption : "本地服务未连接")")
-                    .accessibilityLabel("本机处理，\(model.ready ? model.modelCaption : "本地服务未连接")")
-                Spacer(minLength: 4)
-                SettingsLink { Image(systemName: "gearshape").imageScale(.medium) }
-                    .buttonStyle(.borderless).foregroundStyle(Design.muted)
-                    .frame(width: 24, height: 24)
-                    .help("外观设置").accessibilityLabel("外观设置")
-            }.padding(.horizontal, 17).padding(.bottom, 20)
+            Label(modelStatusLabel, systemImage: "internaldrive")
+                .font(Design.Typography.caption.weight(.medium)).foregroundStyle(modelStatusColor)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help("本机处理 · \(model.ready ? model.modelCaption : "本地服务未连接")")
+                .accessibilityLabel("本机处理，\(model.ready ? model.modelCaption : "本地服务未连接")")
+                .padding(.horizontal, 17).padding(.bottom, 20)
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onChange(of: model.section) { navigationTicket = UUID() }
@@ -268,6 +264,27 @@ struct MeetingRow: View {
             Label("\(meeting.segmentCount)", systemImage: "waveform")
             if meeting.attachmentCount > 0 { Label("\(meeting.attachmentCount)", systemImage: "paperclip") }
         }
+    }
+}
+
+struct AppearanceToggleButton: View {
+    @AppStorage("appearanceMode") private var appearanceMode = "system"
+    @Environment(\.colorScheme) private var colorScheme
+    private var isDark: Bool { colorScheme == .dark }
+    private var actionTitle: String { isDark ? "切换到浅色外观" : "切换到深色外观" }
+    private var currentAppearance: String {
+        let name = isDark ? "深色" : "浅色"
+        return appearanceMode == "system" ? "跟随系统，当前\(name)" : "当前\(name)"
+    }
+    var body: some View {
+        Button { appearanceMode = isDark ? "light" : "dark" } label: {
+            Label(actionTitle, systemImage: isDark ? "sun.max.fill" : "moon.fill")
+                .labelStyle(.iconOnly).font(Design.Typography.headline)
+                .frame(width: 28, height: 28)
+        }
+        .help(actionTitle)
+        .accessibilityLabel(actionTitle)
+        .accessibilityValue(currentAppearance)
     }
 }
 

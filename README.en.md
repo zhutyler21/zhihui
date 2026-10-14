@@ -10,7 +10,7 @@ A native macOS meeting assistant built for Chinese: record audio, transcribe mee
 
 [Releases](https://github.com/zhutyler21/zhihui/releases) · [Quick start](#quick-start) · [Using Zhihui](#using-zhihui) · [Models and data](#models-and-data) · [Development and validation](#development-and-validation) · [Contributor guide](AGENTS.md)
 
-Current version: **0.4.0 / build 14**. Source: [zhutyler21/zhihui](https://github.com/zhutyler21/zhihui). Releases include the validated macOS arm64 App ZIP and checksums. This is a development build that depends on the project directory, not a standalone installer containing Python and model weights. On another Mac, build from source using the instructions below. The distributed App uses **ad-hoc signing and has not been notarized by Apple**. See [release and installation details](docs/发布与安装.md) (Chinese).
+Current version: **0.4.1 / build 15**. Source: [zhutyler21/zhihui](https://github.com/zhutyler21/zhihui). Releases include the validated macOS arm64 App ZIP and checksums. This is a development build that depends on the project directory, not a standalone installer containing Python and model weights. On another Mac, build from source using the instructions below. The distributed App uses **ad-hoc signing and has not been notarized by Apple**. See [release and installation details](docs/发布与安装.md) (Chinese).
 
 The current application interface is Chinese. This file provides English documentation; Chinese button labels are included where needed.
 
@@ -27,7 +27,7 @@ The current application interface is Chinese. This file provides English documen
 | Recoverable deletion | Restore individual transcript segments within their meeting; restore meetings and documents from the sidebar Trash |
 | Existing-record import | Import compatible Foresight meetings and attachments through a read-only process with duplicate prevention |
 
-The interface uses native sidebars, split views, toolbars, and tables, with sea-salt blue, soft white, and teal accents. Body text uses a 16-point baseline. Appearance can follow the system or use light or dark mode. The welcome screen uses SwiftUI and Metal for interactive glass refraction.
+The interface uses native sidebars, split views, toolbars, and tables, with sea-salt blue, soft white, and teal accents. Body text uses a 16-point baseline. The moon/sun button at the top right switches directly between dark and light mode; appearance settings in the application menu still offer Follow System. The welcome screen uses SwiftUI and Metal for interactive glass refraction.
 
 ## Quick start
 
@@ -220,6 +220,8 @@ Prepared real models are required. `verify-real-app.py` also requires the existi
 ### Version-specific validation records
 
 The records for 0.4.0 / build 14 include 42 Python tests, native setup and model-process checks, a build of 22 Swift source files, and isolated native checks of download pause/resume and transcript restoration. See the [welcome and setup validation record](docs/欢迎页验收记录.md) for source bindings, installation checks, and data preservation evidence.
+
+For the appearance shortcut and installation checks in 0.4.1 / build 15, see the [appearance validation record](docs/外观切换验收记录.md), which distinguishes isolated preview checks from the installed App’s permission state.
 
 Keep validation claims tied to their version and scope: controlled permission services in previews do not prove actual macOS authorization; file verification does not prove inference quality; results on one Mac do not establish performance across devices. Development tests should use isolated data.
 
