@@ -7,7 +7,7 @@ __pycache__/
 .DS_Store
 .build/
 
-# Local reverse-analysis evidence and private runtime data.
+# Local-only evidence and private runtime data.
 /docs/rea/
 .env
 .env.*

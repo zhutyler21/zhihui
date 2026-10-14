@@ -176,6 +176,7 @@ The setup screen invokes a separate model preparation process without starting t
 ├── AGENTS.md                 # Development rules and validation requirements
 ├── README.md                 # Chinese project documentation
 ├── README.en.md              # English project documentation
+├── LICENSE                   # MIT project license
 ├── Sources/                  # SwiftUI interface, recording, state, and backend lifecycle
 ├── backend/                  # Extraction, SQLite, indexing, inference, and HTTP service
 ├── Resources/                # Metal shader and pinned model catalog
@@ -251,17 +252,16 @@ The detailed project documents and contributor guide below are currently in Chin
 | [Welcome visuals](docs/欢迎页视觉.md) | Glass effects and implementation boundaries |
 | [Welcome validation records](docs/欢迎页验收记录.md) | Current and historical validation scope |
 | [Interface validation records](docs/界面升级验收记录.md) | Layout and interaction checks |
-| [Independent implementation background](docs/REA分析与独立实现.md) | Foresight analysis and implementation boundaries |
 | [Earlier integration validation](docs/最终验收记录.md) | Integration checks for earlier versions |
 
 ## Contributing
 
 Describe the concrete problem or use case, the resulting behavior, how it was validated, and anything not yet verified. Update the relevant documentation when functionality or data flows change. Prefer focused changes that can be reviewed, validated, and rolled back.
 
-## Attribution and licensing
+## License and acknowledgments
 
-Zhihui is independently implemented and is not an official Google product. Existing Foresight data is imported through a read-only compatibility process; project documentation describes the analysis and migration boundaries.
+The project's code and documentation are licensed under the **[MIT License](LICENSE)**.
 
 The project uses SwiftUI, Metal, SenseVoice / sherpa-onnx, Silero VAD, BGE / FastEmbed, and MLX / Qwen3, among other tools and models. Third-party license texts are in [docs/licenses/](docs/licenses/). SenseVoice tool code and model weights have different licenses and should be reviewed separately.
 
-**No license has been selected for this project's code yet.** Third-party tools, weights, and dependencies remain subject to their own licenses. Bundled third-party license files do not assign the same license to the project's code.
+Third-party models, weights, and dependencies remain subject to their respective licenses; the project's MIT license does not replace them.

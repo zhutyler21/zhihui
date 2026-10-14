@@ -174,6 +174,7 @@ flowchart LR
 ├── AGENTS.md                 # 开发协作规则与验证要求
 ├── README.md                 # 项目入口
 ├── README.en.md              # 英文项目介绍与使用说明
+├── LICENSE                   # MIT 项目许可证
 ├── Sources/                  # SwiftUI 界面、录音、状态与后端生命周期
 ├── backend/                  # 资料读取、SQLite、索引、推理与 HTTP 服务
 ├── Resources/                # Metal 着色器与固定模型清单
@@ -247,17 +248,16 @@ bash scripts/test-preflight-shutdown.sh
 | [欢迎页视觉](docs/欢迎页视觉.md) | 玻璃效果的视觉与实现边界 |
 | [欢迎页验收记录](docs/欢迎页验收记录.md) | 当前版本与历史验证范围 |
 | [界面升级验收记录](docs/界面升级验收记录.md) | 布局及交互增量验证 |
-| [独立实现依据](docs/REA分析与独立实现.md) | Foresight 分析与独立实现的边界 |
 | [早期完整验收](docs/最终验收记录.md) | 早期版本的集成验证 |
 
 ## 参与开发
 
 提交改动时写清：具体问题或使用场景、最终行为、验证方式，以及未验证的部分。功能或数据流程变化，同步更新相关文档；优先完成一个范围清楚、可回滚、可验证的改动。
 
-## 来源与许可
+## 许可与致谢
 
-知会是独立实现的本地应用，不是 Google 官方产品。原 Foresight 数据通过只读兼容流程导入，分析与迁移依据见项目文档。
+本项目代码与文档采用 **[MIT License](LICENSE)**。
 
 项目依赖 SwiftUI、Metal、SenseVoice / sherpa-onnx、Silero VAD、BGE / FastEmbed、MLX / Qwen3 等工具与模型。第三方许可保存在 [docs/licenses/](docs/licenses/)；SenseVoice 工具代码和模型权重使用不同许可，应分别查看。
 
-**当前项目代码尚未指定 LICENSE。** 模型、权重与依赖按各自许可使用与分发；仓库中的第三方许可文件不等于项目代码已采用相同许可。
+第三方模型、权重与依赖仍按各自许可使用与分发，不受本项目 MIT 许可替代。
