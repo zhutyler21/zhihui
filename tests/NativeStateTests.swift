@@ -11,6 +11,9 @@ struct NativeStateTests {
             try await delayedCancellationRegression()
             try await delayedMeetingEditingRegression()
             try await staleRefreshSavedDraftRegression()
+            try await blockedCompletionRegression()
+            try await projectionOwnershipRegression()
+            try await translationSettingsPollingRegression()
             try NativeSelfTest.run()
             print("PASS native state: recording/import clocks, unknown-duration order, restart, owned spool, delayed HTTP cancellation, actual AppModel delayed selection/edit lock/save failure/latest response, system gap and mixed audio")
         } catch { fputs("FAIL \(error.localizedDescription)\n", stderr); exit(1) }
@@ -45,6 +48,14 @@ struct NativeStateTests {
         try require(restarted.pending.last?.startSeconds == 44.75,"重启后导入回退到旧detail时间")
         let legacy = AudioQueueState(snapshot:AudioQueueSnapshot(items:[PendingTranscription(id:"negative",meetingID:"C",path:"x",startSeconds:-3,durationSeconds:-2)],knownEnds:[:]))
         try require(legacy.pending[0].startSeconds == 0 && legacy.pending[0].durationSeconds == 0,"旧队列负时长没有按未知时长恢复")
+        var bilingual = AudioQueueState()
+        bilingual.enqueueImports(meetingID: "synthetic-translation", paths: ["synthetic.wav"], savedEnd: 0, sourceLanguage: "ja", translationTarget: "zh")
+        let restored = AudioQueueState(snapshot: try JSONDecoder().decode(AudioQueueSnapshot.self, from: JSONEncoder().encode(bilingual.snapshot)))
+        try require(restored.pending.first?.sourceLanguage == "ja" && restored.pending.first?.translationTarget == "zh", "重启后语言设置丢失或跟随了错误会议")
+        bilingual.enqueueImports(meetingID: "multi", paths: ["multi.wav"], savedEnd: 0, sourceLanguage: "yue", translationTargets: ["en", "ja", "ko"])
+        let multi = AudioQueueState(snapshot: try JSONDecoder().decode(AudioQueueSnapshot.self, from: JSONEncoder().encode(bilingual.snapshot)))
+        try require(multi.pending.last?.translationTargets == ["en", "ja", "ko"], "多语种录音队列重启后丢失目标语言")
+        try require(TranslationSettings(["target_language":"ja"]).targetLanguages == ["ja"], "旧版单语种设置未兼容")
     }
     static func spoolRegression() throws {
         let root = URL(fileURLWithPath:ProcessInfo.processInfo.environment["ZHIHUI_NATIVE_TEST_ROOT"]!,isDirectory:true)
@@ -123,5 +134,59 @@ struct NativeStateTests {
         let stored=try await client.call("/api/test/status")
         try require((stored["saved_notes"] as? JSONObject)?["A"] as? String == newest,"fixture后台没有持久新笔记")
         try require(model.noteDraft == newest && model.detail?.note == newest && !model.noteDirty,"陈旧刷新覆盖了已经保存的最新笔记草稿/详情")
+    }
+    @MainActor static func blockedCompletionRegression() async throws {
+        var failed = PendingTranscription(id:"blocked-B",meetingID:"B",path:"synthetic-B.wav",startSeconds:0,durationSeconds:6)
+        failed.error = "synthetic ASR failure"
+        let waiting = PendingTranscription(id:"waiting-A",meetingID:"A",path:"synthetic-A.wav",startSeconds:0,durationSeconds:6)
+        let client = APIClient(port:Int(CommandLine.arguments[1])!,token:"native-fixture-token")
+        let model = AppModel(client:client, audioSnapshot:AudioQueueSnapshot(items:[failed,waiting],knownEnds:[:]))
+        let finishing = Task { await model.finishAndSummarize("A") }
+        try await Task.sleep(for:.milliseconds(650))
+        finishing.cancel(); await finishing.value
+        try require(model.alert?.title == "还有原文未完成", "其他会议失败的队首任务让完成纪要一直等待")
+        try require(model.pending.count == 2 && model.finishingMeetings.isEmpty, "失败提示丢失原音频或留下整理锁")
+    }
+    @MainActor static func projectionOwnershipRegression() async throws {
+        let client = APIClient(port:Int(CommandLine.arguments[1])!,token:"native-fixture-token")
+        let screen = ProjectionSession(); screen.bind("A")
+        let old = Task { await screen.refresh(client:client) }
+        try await Task.sleep(for:.milliseconds(40)); screen.bind("B")
+        await screen.refresh(client:client); await old.value
+        try require(screen.meeting?.id == "B", "大屏被旧会议的迟到响应覆盖")
+        screen.bind("A")
+        let pause = Task { await screen.refresh(client:client) }
+        try await Task.sleep(for:.milliseconds(40)); screen.setPaused(true); await pause.value
+        try require(screen.meeting == nil, "暂停后仍显示了在途新内容")
+        screen.setPaused(false); await screen.refresh(client:client)
+        try require(screen.meeting?.id == "A", "大屏继续显示后无法恢复刷新")
+        screen.bind("deleted"); await screen.refresh(client:client)
+        try require(screen.meeting == nil && screen.message.contains("回收站"), "已删除会议仍在投屏")
+    }
+    @MainActor static func translationSettingsPollingRegression() async throws {
+        let client = APIClient(port:Int(CommandLine.arguments[1])!, token:"native-fixture-token")
+        for id in ["translation-save", "translation-fail"] {
+            let model = AppModel(client: client)
+            await model.selectMeeting(id)
+            try require(model.detail?.id == id && model.detail?.segments.first?.translations.first?.state == "running", "合成翻译会议初始身份或状态不正确")
+            let saved = await model.configureTranslation(TranslationSettings(["enabled":true]), meetingID:id)
+            try require(saved == (id == "translation-save"), "语言设置成功/失败夹具未生效")
+            _ = try await client.call("/api/test/complete-translation", method:"POST", body:["meeting_id":id])
+            for _ in 0..<30 {
+                if model.detail?.segments.first?.translations.first?.state == "done" { break }
+                try await Task.sleep(for:.milliseconds(100))
+            }
+            try require(model.detail?.segments.first?.translations.first?.state == "done", "保存语言设置\(saved ? "成功" : "失败")后，后台译文完成但原生状态没有继续刷新")
+        }
+        let switched = AppModel(client: client)
+        await switched.selectMeeting("translation-other")
+        try require(switched.detail?.id == "translation-other", "切换后合成会议身份不正确")
+        _ = await switched.configureTranslation(TranslationSettings(), meetingID:"translation-save")
+        _ = try await client.call("/api/test/complete-translation", method:"POST", body:["meeting_id":"translation-other"])
+        for _ in 0..<30 {
+            if switched.detail?.segments.first?.translations.first?.state == "done" { break }
+            try await Task.sleep(for:.milliseconds(100))
+        }
+        try require(switched.detail?.id == "translation-other" && switched.detail?.segments.first?.translations.first?.state == "done", "保存旧会议设置中断了当前会议的译文刷新")
     }
 }

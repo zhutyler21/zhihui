@@ -4,13 +4,13 @@
 
 **Turn a conversation into knowledge you can revisit, edit, and ask questions about.**
 
-A native macOS meeting assistant built for Chinese: record audio, transcribe meetings, write Markdown notes, generate Chinese summaries, and ask questions with source citations—all using local inference. SwiftUI provides the desktop interface; SenseVoice, BGE, and Qwen3 provide the AI capabilities.
+A native macOS meeting assistant built for Chinese: record audio, transcribe multilingual meetings, display local multilingual captions and a presentation window, write Markdown notes, generate Chinese summaries, and ask questions with source citations—all using local inference. SwiftUI provides the desktop interface; SenseVoice, BGE, and Qwen3 provide the AI capabilities.
 
 `macOS 14+` · `Apple Silicon` · `SwiftUI + Metal` · `Python 3.12` · `Local inference`
 
 [Releases](https://github.com/zhutyler21/zhihui/releases) · [Quick start](#quick-start) · [Using Zhihui](#using-zhihui) · [Models and data](#models-and-data) · [Development and validation](#development-and-validation) · [Contributor guide](AGENTS.md)
 
-Current version: **0.5.0 / build 16**. Source: [zhutyler21/zhihui](https://github.com/zhutyler21/zhihui). The standalone DMG includes Python, the backend, pinned dependencies, and the audio converter inside the App. You can move the App without retaining the source repository or installing Homebrew. Download the three models explicitly during first-run setup. The App uses **ad-hoc signing and has not been notarized by Apple**. See [release and installation details](docs/发布与安装.md) and [standalone validation records](docs/独立安装验收记录.md) (Chinese).
+Latest release: **0.8.0 / build 21**, including in-app updates, compact recording controls, transcript/notes panes, direct note editing and automatic meeting names. Source: [zhutyler21/zhihui](https://github.com/zhutyler21/zhihui). The standalone DMG includes Python, the backend, pinned dependencies, and the audio converter inside the App. You can move the App without retaining the source repository or installing Homebrew. Download the three models explicitly during first-run setup. Public releases use **ad-hoc signing and have not been notarized by Apple**. Local development builds can use an existing Apple Development identity to keep a compatible identity across updates. Set `ZHIHUI_SIGNING_IDENTITY` for the build or store its name or SHA-1 in the untracked `work/local-signing-identity`; an explicit identity takes priority, and unavailable configured certificates fail the build. This is neither Developer ID distribution signing nor notarization. See [release, signing, and installation details](docs/发布与安装.md) and [0.8.0 release validation](docs/0.8.0发布验收.md) (Chinese).
 
 The current application interface is Chinese. This file provides English documentation; Chinese button labels are included where needed.
 
@@ -19,7 +19,10 @@ The current application interface is Chinese. This file provides English documen
 | Feature | What you can do |
 | --- | --- |
 | Meeting management | Create, search, and rename meetings; organize transcripts, notes, summaries, and attachments by meeting |
-| Chinese transcription | Record microphone audio, system audio, or both; import existing audio; retain timestamps and edit transcript segments |
+| Multilingual transcription | Record microphone audio, system audio, or both; import existing audio; retain timestamps and edit transcript segments |
+| Cantonese transcription | Select Cantonese (`粤语`) under the speech-language setting; translations can stay disabled while originals and Chinese minutes remain available, with no extra model |
+| Local live translation | Chinese, English, Japanese, and Korean; multiple selected targets, aligned originals and translations, retry, and multilingual export |
+| Live translation display | A separate window with the original and up to four translation columns; external-display fullscreen, font size, light/dark appearance, pause, and follow controls |
 | Markdown notes | Edit Markdown source and render headings, lists, tasks, quotes, tables, and code blocks when finished |
 | Chinese summaries | Summarize the meeting's transcript, notes, and linked materials, with citations to the source text |
 | Local knowledge base | Copy documents locally, extract text, split it into chunks, and build a Chinese vector index |
@@ -40,7 +43,7 @@ The interface uses native sidebars, split views, toolbars, and tables, with sea-
 | Runtime | Included in the App; no separate Python, ffmpeg, or Homebrew installation |
 | Storage and network | Approximately 2.61 GB for models, plus the App, recordings, and attachments; first-time model downloads require internet access |
 
-1. Download `Zhihui-v0.5.0-macOS-arm64.dmg` from the [v0.5.0 Release](https://github.com/zhutyler21/zhihui/releases/tag/v0.5.0).
+1. Download `Zhihui-v0.8.0-macOS-arm64.dmg` from the [v0.8.0 Release](https://github.com/zhutyler21/zhihui/releases/tag/v0.8.0).
 2. Open the DMG and drag **Zhihui** (`知会`) into its **Applications** folder.
 3. Open the installed App and follow macOS prompts for first-time opening and audio access.
 
@@ -63,11 +66,25 @@ macOS groups system audio access under Screen & System Audio Recording. The curr
 
 ### From recording to meeting notes
 
-1. **Create and name a meeting.** Click the meeting title to rename it.
-2. **Choose an audio source.** Use the microphone for an in-person meeting, system audio for content played on the Mac, or mixed audio for an online meeting with headphones.
-3. **Record or import audio.** Stopping a recording saves pending audio for transcription. Review the resulting text and segment timestamps.
-4. **Correct and annotate.** Use a segment's “…” menu to edit or delete it. In Notes, select **Edit** (`编辑`) to write Markdown, then **Done** (`完成`) to save and preview it.
-5. **Generate a Chinese summary.** Check names, numbers, decisions, owners, and deadlines against the cited source text.
+Meetings open in the materials page with one **Start recording** (`开始录音`) and **Import audio** (`导入音频`) group at the top. Click the recording button to start, or its adjacent arrow to choose the audio source. Empty states show guidance without duplicating these actions. A labeled **New meeting** (`新建会议`) button stays at the top right in every destination. Transcripts and notes share resizable panes by default: side by side in a wide window, stacked in a narrow window. Use the split icon beside the content tabs to turn off the split view and focus on one tab. **Live workspace** (`实时会场`) contains translation and display controls; returning preserves the content tab and note draft. Notes are saved before leaving, and a failed save keeps the current page open. The translation display remains an independent window.
+
+1. **Create and name a meeting.** Select **New meeting** at the top right, then click the title to name it manually, or let minutes generation name it automatically.
+2. **Choose an audio source.** Open the arrow beside **Start recording**. Use the microphone for an in-person meeting, system audio for content played on the Mac, or mixed audio for an online meeting with headphones.
+3. **Record or import audio** directly from the meeting page. While recording, a persistent bar above the content shows the timer, **Stop recording** (`停止录音`), and **Stop and summarize** (`停止并整理`), including in Library and Questions. Stopping saves audio and continues transcription; summarizing waits for this meeting's remaining transcription.
+4. **Take notes alongside the transcript.** Use a segment's “…” menu to edit or delete it. Write Markdown directly in empty notes, or click existing notes to resume writing. Changes save automatically; click outside the notes area or press ⌘Return to display the formatted result.
+5. **Generate a Chinese summary.** Check names, numbers, decisions, owners, and deadlines against the cited source text. Meetings without a saved manual name receive a topic title from the minutes; regenerating minutes also refreshes automatic titles. Manual names remain unchanged. A naming failure keeps the existing name and still saves valid minutes.
+
+Use **Language settings** (`语言设置…`) in the **Live translation** (`实时翻译`) area of the live workspace, choose source and target languages, then turn on the adjacent switch. Live mode saves approximately 2–6-second blocks before inference, plus queue, inference, and refresh latency; mixed audio adds approximately two seconds of timeline buffering. Translate existing text separately or select **Stop and summarize** (`停止并整理`) to finish this meeting's pending transcription before generating Chinese minutes. Numeric and common relative-time checks reject detected mismatches. See the [model architecture and research notes](docs/多语言实时翻译与模型体系.md) (Chinese).
+
+For Cantonese meetings, select **Speech language → Cantonese** (`讲话语言 → 粤语`) before recording or importing audio. Speech recognition still uses Cantonese when translations are disabled. Automatic detection also recognized the single synthetic Cantonese fixture used in this check; this does not establish accuracy across accents. Originals may retain colloquial Cantonese wording, while minutes use Simplified Chinese. See the [Cantonese validation record](docs/粤语转写验收记录.md) (Chinese).
+
+### Live translation on a conference display
+
+In **Language settings** (`语言设置…`) in the live workspace's translation area, select the speech language, check the required Chinese, English, Japanese, and Korean targets, enable translation, and save. Cantonese is also available as an input language. Select **Open translation display** (`打开翻译大屏`) in the same area, move the separate window to an external display or projector, and select **Fullscreen** (`全屏`); Esc exits fullscreen. Recording and meeting editing stay in the main window.
+
+The display puts the newest speech at the top, with originals and translations aligned by segment and updated as each translation completes. Follow mode returns to the top automatically. The meeting transcript keeps chronological order, with the newest content at the bottom. Hide the original, adjust captions from 24 to 64 points, switch light/dark appearance, pause display updates, or disable follow mode and scroll down to review earlier content. Pausing the display does not stop recording or translation. **Fill translations** (`补齐译文`) retries missing or failed targets. The display contains the latest 30 segments; full originals, translations, and minutes remain saved with the meeting.
+
+Targets share one local text model and are generated in sequence, so additional targets can increase waiting time. Long speech or smaller windows can require scrolling or smaller text. This version provides a local native window for an attached display; LAN browser links and cross-device synchronization are not implemented. Moving the window and using fullscreen were checked on this Mac’s connected external display; other display hardware and long-running conference stability remain unverified. See the [live display validation record](docs/实时翻译大屏验收记录.md) (Chinese).
 
 Mixed recording does not provide acoustic echo cancellation. Headphones help prevent speaker playback from being recorded again by the microphone.
 
@@ -83,15 +100,23 @@ Supported documents include TXT, MD, CSV, JSON, LOG, HTML, text-based PDF, DOCX,
 - **Meetings and documents:** **Trash** (`回收站`) at the bottom of the sidebar manages whole meetings and documents. Deleted content is excluded from normal retrieval.
 - **Foresight records:** **Import Foresight meetings** (`导入 Foresight 会议`) reads compatible records while retaining the original database. Email and contacts are not imported automatically.
 
+## In-app updates
+
+Starting with 0.8.0, standalone builds check GitHub daily. Use **Zhihui → Check for Updates…** (shown in Chinese) or **Settings → Software Updates** to check manually. Confirm download and installation to save notes, quit normally and relaunch. Active recording, model downloads and meeting jobs defer updates. If recording starts during a download, finish the task and choose **Install Update and Restart** in Settings. Automatic checks can be disabled; manual checks remain available.
+
+Updates replace the App while keeping meetings, recordings and models in the existing user data directory. Requests fetch only release metadata and update packages; meeting content is never uploaded. Both feeds and archives require Ed25519 signatures. Sound permission retention also depends on bundle identity, compatible code signing and macOS; the updater never resets or bypasses permissions.
+
+**The 0.5.0 release has no updater and requires one manual upgrade to 0.8.0.** Maintainers must publish the signed archive and `appcast.xml` together in a stable GitHub Release. Pushing source commits alone does not distribute an update. Source development packages disable release updates. See [update publishing instructions](docs/自动更新与发布.md) (Chinese).
+
 ## Models and data
 
 ### Three local models
 
 | Purpose | Model | Runtime | Folder within the model directory |
 | --- | --- | --- | --- |
-| Chinese speech transcription | SenseVoice int8 + Silero VAD | sherpa-onnx / CPU | `sensevoice/` |
+| Mandarin, Cantonese, English, Japanese, Korean transcription | SenseVoice int8 + Silero VAD | sherpa-onnx / CPU | `sensevoice/` |
 | Chinese semantic retrieval | BGE-small-zh-v1.5 | FastEmbed / ONNX Runtime / CPU | `bge-small-zh/` |
-| Chinese summaries and answers | Qwen3-4B-Instruct-2507 4bit | MLX / Apple Silicon GPU | `qwen3-4b/` |
+| Four-language translation, Chinese summaries and answers | Qwen3-4B-Instruct-2507 4bit | MLX / Apple Silicon GPU | `qwen3-4b/` |
 
 The standalone model directory is `~/Library/Application Support/知会/models/`. Source-development mode defaults to the repository's `models/` directory.
 
@@ -226,11 +251,25 @@ These checks cover storage, scoped retrieval, download protocols, note saving, r
 ```sh
 .venv/bin/python scripts/verify-real-app.py
 .venv/bin/python scripts/verify-summary-quality.py
+.venv/bin/python scripts/verify-projection.py
+.venv/bin/python scripts/verify-translation.py --audio-dir work/live-translation-20261016/audio --port 8796
 ```
 
 Prepared real models are required. `verify-real-app.py` also requires the existing test audio at `work/中文会议验收.aiff`, which is not tracked in Git. The scripts create isolated data directories under `work/` and prohibit external model connections. They check backend and inference behavior, not actual microphone permissions, system audio capture, or native-window interactions.
 
+The display integration check additionally requires `work/live-translation-20261016/audio/zh.aiff` and `work/cantonese-20261016/audio/yue.aiff`. It uses isolated data and port 8892 to verify one original fanning out to multiple translations, Chinese minutes, and export. Audio fixtures are not distributed with the repository.
+
+The four-language check requires synthetic `zh.aiff`, `en.aiff`, `ja.aiff`, and `ko.aiff` files under `--audio-dir`. It checks four transcriptions, 12 translation directions, Chinese minutes, and export. Passing does not establish proper-name or semantic accuracy: name and Japanese/Korean wording errors were observed. Review important content against the originals.
+
 ### Version-specific validation records
+
+Version 0.7.2 / build 20 adds direct recording controls, a persistent stop bar, and resizable transcript/notes panes. See the [meeting interaction validation](docs/会议交互优化验收.md) (Chinese).
+
+Version 0.7.1 / build 19 opens meeting materials by default and moves recording, translation, and display controls into a separate live workspace, while keeping the independent display window. See [translation entry improvements](docs/翻译入口体验调整.md) for window, appearance, control, and installation checks.
+
+For the 0.7.0 / build 18 display, multiple translation targets, native-window interactions, relocation, and installation checks, see the [live display validation record](docs/实时翻译大屏验收记录.md) (Chinese).
+
+For 0.6.0 / build 17 multilingual features, real models, native windows, standalone packaging, and limits, see the [multilingual validation record](docs/多语言翻译验收记录.md) (Chinese). System permission setup and actual hardware recording validation were skipped at the user's request.
 
 For 0.5.0 / build 16 runtime packaging, relocation, DMG, installation, and data-preservation evidence, see the [standalone validation record](docs/独立安装验收记录.md). The 0.4-series records below retain their original version scope and do not establish acceptance of every feature in this release.
 
@@ -260,6 +299,9 @@ The detailed project documents and contributor guide below are currently in Chin
 | --- | --- |
 | [Contributor guide](AGENTS.md) | Change scope, data protection, validation, and delivery rules |
 | [Release and installation](docs/发布与安装.md) | Release files, signing, dependencies, and publication scope |
+| [Meeting interaction validation](docs/会议交互优化验收.md) | 0.7.2 recording controls, split notes, and persistence checks |
+| [Translation entry improvements](docs/翻译入口体验调整.md) | 0.7.1 materials/live separation, note protection, and two-window checks |
+| [Live translation display](docs/实时翻译大屏验收记录.md) | 0.7.0 display and installation checks; 0.7.2 newest captions at the top |
 | [Acceptance and interfaces](docs/验收与接口.md) | Product capabilities and interface contracts |
 | [Backend implementation and validation](docs/后端实现与验证.md) | Storage, retrieval, and task processing |
 | [Native interface and recording](docs/原生界面与录音.md) | Windows and audio implementation |

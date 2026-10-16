@@ -9,7 +9,7 @@
       "weights_license": "FunASR MODEL_LICENSE",
       "weights_license_url": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
       "id": "asr",
-      "name": "SenseVoice · 中文语音转写",
+      "name": "SenseVoice · 中英日韩粤语转写",
       "files": [
         {
           "path": "sensevoice/model.int8.onnx",
@@ -96,7 +96,7 @@
       "revision": "50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b",
       "folder": "qwen3-4b",
       "id": "llm",
-      "name": "Qwen3 · 中文纪要与问答",
+      "name": "Qwen3 · 翻译、纪要与问答",
       "files": [
         {
           "path": "qwen3-4b/README.md",

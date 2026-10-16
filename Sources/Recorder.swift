@@ -59,13 +59,15 @@ final class AudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
     private var publishedChunks: [AudioChunk] = []; private var tapInstalled = false
     private var lifecycleSession: UUID?
     let chunkFrames = 160000
+    private var liveTranslation = false
     private static func hostSeconds() -> Double { CMClockGetTime(CMClockGetHostTimeClock()).seconds }
 
-    @MainActor func start(mode: RecordingMode, directory: URL, onChunk: @escaping (AudioChunk) -> Void, onError: @escaping (String) -> Void) async throws {
+    @MainActor func start(mode: RecordingMode, directory: URL, liveTranslation: Bool = false, onChunk: @escaping (AudioChunk) -> Void, onError: @escaping (String) -> Void) async throws {
         let lifecycleID = UUID()
         queue.sync {
             lifecycleSession = lifecycleID; publishedChunks = []; singleSamples = []; converters = [:]; mixer = TimelineMixer()
             active = false; prepared = false; folder = nil; callback = onChunk; failure = onError
+            self.liveTranslation = liveTranslation
         }
         // Resolve both permissions before starting either source in combined mode.
         if mode.needsMicrophone {
@@ -232,20 +234,34 @@ final class AudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
             if let late = mixer.add(input, start: start, gain: timelineGain) { _ = publishWAV(late.samples, start: late.start, kind: "late") }
         } else {
             singleSamples.append(contentsOf: input)
-            while active && singleSamples.count >= chunkFrames { publishSingle(count: chunkFrames) }
+            while active, let count = nextChunkSize(singleSamples[...]) { publishSingle(count: count) }
         }
     }
     private func publishSingle(count: Int) {
         if publishWAV(Array(singleSamples.prefix(count)), start: singleEmittedFrames) { singleSamples.removeFirst(count); singleEmittedFrames += count }
     }
     private func publishMixed(through frame: Int, finish: Bool) {
-        while active && mixer.samples.count >= chunkFrames && mixer.emittedFrames + chunkFrames <= frame {
-            guard publishWAV(Array(mixer.samples.prefix(chunkFrames)), start: mixer.emittedFrames) else { return }; mixer.commit(chunkFrames)
+        while active, let count = nextChunkSize(mixer.samples.prefix(max(0, frame - mixer.emittedFrames))) {
+            guard publishWAV(Array(mixer.samples.prefix(count)), start: mixer.emittedFrames) else { return }; mixer.commit(count)
         }
         if finish && !mixer.samples.isEmpty {
             let count = mixer.samples.count
             if publishWAV(mixer.samples, start: mixer.emittedFrames) { mixer.commit(count) }
         }
+    }
+    private func nextChunkSize(_ samples: ArraySlice<Float>) -> Int? {
+        if !liveTranslation { return samples.count >= chunkFrames ? chunkFrames : nil }
+        return Self.translationBoundary(samples)
+    }
+    /// Prefer a 160 ms pause after two seconds; continuous speech is bounded at six.
+    /// This only schedules durable audio blocks; Silero performs actual speech detection.
+    static func translationBoundary(_ samples: ArraySlice<Float>) -> Int? {
+        guard samples.count >= 32000 else { return nil }
+        let count = min(samples.count, 96000)
+        let tail = samples.prefix(count).suffix(2560)
+        let energy = tail.reduce(Float(0)) { $0 + $1 * $1 } / Float(tail.count)
+        if energy < 0.000064 { return count }
+        return samples.count >= 96000 ? 96000 : nil
     }
     @discardableResult private func publishWAV(_ input: [Float], start: Int, kind: String = "chunk") -> Bool {
         guard !input.isEmpty, let folder else { return true }
@@ -272,8 +288,9 @@ final class AudioRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecke
         }
         try data.write(to: url, options: .atomic); try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
-    func testFeed(_ buffers: [AVAudioPCMBuffer], directory: URL, onChunk: @escaping (AudioChunk) -> Void) {
+    func testFeed(_ buffers: [AVAudioPCMBuffer], directory: URL, liveTranslation: Bool = false, onChunk: @escaping (AudioChunk) -> Void) {
         queue.sync {
+            self.liveTranslation = liveTranslation
             folder = directory; callback = onChunk; active = true; mixed = false; singleEmittedFrames = 0; singleSamples = []; converters = [:]
             for buffer in buffers { consume(buffer, track: .microphone, timestamp: 0) }; drain(.microphone)
             if !singleSamples.isEmpty { publishSingle(count: singleSamples.count) }; active = false

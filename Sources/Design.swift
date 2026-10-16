@@ -2,6 +2,11 @@ import SwiftUI
 import AppKit
 
 enum Design {
+    enum Spacing {
+        static let sidebarInset: CGFloat = 20
+        static let listInset: CGFloat = 20
+        static let contentInset: CGFloat = 24
+    }
     enum Typography {
         static let body = Font.system(size: 16)
         static let callout = Font.system(size: 15)

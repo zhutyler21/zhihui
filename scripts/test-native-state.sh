@@ -8,6 +8,7 @@ xcrun swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macosx14.
   "$PROJECT_ROOT/Sources/Models.swift" "$PROJECT_ROOT/Sources/RuntimePaths.swift" "$PROJECT_ROOT/Sources/API.swift" \
   "$PROJECT_ROOT/Sources/StateMachines.swift" "$PROJECT_ROOT/Sources/AudioImportSpool.swift" \
   "$PROJECT_ROOT/Sources/AppModel.swift" \
+  "$PROJECT_ROOT/Sources/ProjectionState.swift" \
   "$PROJECT_ROOT/Sources/Recorder.swift" "$PROJECT_ROOT/Sources/NativeAudioTests.swift" \
   "$PROJECT_ROOT/tests/NativeStateTests.swift" -o "$RUN_ROOT/native-state-tests"
 /usr/bin/python3 "$PROJECT_ROOT/tests/native-delay-server.py" --ready "$RUN_ROOT/ready.json" > "$RUN_ROOT/delay-server.log" 2>&1 &

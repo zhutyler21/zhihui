@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlsplit
 import uuid
 
 from .documents import chunks, extract_text, MAX_FILE_BYTES
+from .translation import DEFAULT_SETTINGS, source_language, target_language, target_languages, text_digest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FORESIGHT_DB = Path.home()/'Library/Application Support/com.google.AIEdgeForesight/database.sqlite'
@@ -67,7 +68,7 @@ class Store:
                 id TEXT PRIMARY KEY,title TEXT NOT NULL,note TEXT NOT NULL DEFAULT '',
                 summary TEXT NOT NULL DEFAULT '',created_at REAL NOT NULL,updated_at REAL NOT NULL,
                 deleted_at REAL,origin_event_id TEXT,origin_timestamp INTEGER,
-                content_version INTEGER NOT NULL DEFAULT 0,
+                content_version INTEGER NOT NULL DEFAULT 0,title_automatic INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(origin_event_id,origin_timestamp));
               CREATE TABLE IF NOT EXISTS segments (
                 id TEXT PRIMARY KEY,meeting_id TEXT NOT NULL REFERENCES meetings(id),
@@ -94,7 +95,29 @@ class Store:
                 partial TEXT NOT NULL DEFAULT '',result TEXT,error TEXT,
                 created_at REAL NOT NULL,updated_at REAL NOT NULL);
               CREATE INDEX IF NOT EXISTS jobs_request ON jobs(request_key);
+              CREATE TABLE IF NOT EXISTS translation_settings (
+                meeting_id TEXT PRIMARY KEY REFERENCES meetings(id),
+                source_language TEXT NOT NULL DEFAULT 'auto',
+                target_language TEXT NOT NULL DEFAULT 'en',enabled INTEGER NOT NULL DEFAULT 0);
+              CREATE TABLE IF NOT EXISTS translations (
+                segment_id TEXT NOT NULL REFERENCES segments(id),target_language TEXT NOT NULL,
+                source_hash TEXT NOT NULL,text TEXT NOT NULL DEFAULT '',state TEXT NOT NULL,
+                error TEXT NOT NULL DEFAULT '',updated_at REAL NOT NULL,
+                PRIMARY KEY(segment_id,target_language));
             ''')
+            if 'target_languages' not in {row[1] for row in conn.execute('PRAGMA table_info(translation_settings)')}:
+                conn.execute("ALTER TABLE translation_settings ADD COLUMN target_languages TEXT NOT NULL DEFAULT '[]'")
+            if 'title_automatic' not in {row[1] for row in conn.execute('PRAGMA table_info(meetings)')}:
+                conn.execute('ALTER TABLE meetings ADD COLUMN title_automatic INTEGER NOT NULL DEFAULT 0')
+                # Legacy custom/imported names stay protected. Recognize only the
+                # exact timestamp placeholder originally created by this app.
+                for row in conn.execute('SELECT id,title,created_at FROM meetings WHERE origin_event_id IS NULL').fetchall():
+                    try:
+                        placeholder = datetime.fromtimestamp(row['created_at']).strftime('会议 %Y-%m-%d %H:%M')
+                    except (ValueError, TypeError, OverflowError, OSError):
+                        continue
+                    if row['title'] == placeholder:
+                        conn.execute('UPDATE meetings SET title_automatic=1 WHERE id=?', (row['id'],))
         self.db_path.chmod(0o600)
 
     @contextmanager
@@ -123,13 +146,96 @@ class Store:
     @staticmethod
     def _meeting_public(conn, row):
         result = {k: row[k] for k in ('id','title','created_at','updated_at','deleted_at','summary')}
+        result['title_automatic'] = bool(row['title_automatic'])
         result['segment_count'] = conn.execute('SELECT COUNT(*) FROM segments WHERE meeting_id=? AND deleted_at IS NULL', (row['id'],)).fetchone()[0]
         result['attachment_count'] = conn.execute("SELECT COUNT(*) FROM sources WHERE meeting_id=? AND kind='file' AND deleted_at IS NULL", (row['id'],)).fetchone()[0]
+        result['translation'] = Store._translation_settings(conn, row['id'])
         return result
 
     @staticmethod
-    def _segment_public(row):
-        return {k: row[k] for k in ('id','text','start_seconds','end_seconds','created_at','deleted_at')}
+    def _segment_public(row, conn=None):
+        result = {k: row[k] for k in ('id','text','start_seconds','end_seconds','created_at','deleted_at')}
+        result['translations'] = [] if conn is None else [dict(t) for t in conn.execute(
+            'SELECT target_language,text,state,error,updated_at FROM translations WHERE segment_id=? AND source_hash=?',
+            (row['id'], text_digest(row['text'])))]
+        return result
+
+    @staticmethod
+    def _translation_settings(conn, meeting_id):
+        row = conn.execute('SELECT source_language,target_language,enabled,target_languages FROM translation_settings WHERE meeting_id=?', (meeting_id,)).fetchone()
+        if not row:
+            return dict(DEFAULT_SETTINGS, target_languages=list(DEFAULT_SETTINGS['target_languages']))
+        languages = json.loads(row['target_languages']) or [row['target_language']]
+        return {'source_language': row['source_language'], 'target_language': languages[0],
+                'target_languages': languages, 'enabled': bool(row['enabled'])}
+
+    def translation_settings(self, meeting_id):
+        with self.db() as conn:
+            self._meeting(conn, meeting_id, live=True)
+            return self._translation_settings(conn, meeting_id)
+
+    def configure_translation(self, meeting_id, settings):
+        if not isinstance(settings, dict) or not settings or set(settings) - set(DEFAULT_SETTINGS):
+            raise ValueError('翻译设置无效。')
+        with self.lock, self.db() as conn:
+            self._meeting(conn, meeting_id, live=True)
+            value = self._translation_settings(conn, meeting_id) | settings
+            if 'target_languages' in settings:
+                value['target_languages'] = target_languages(settings['target_languages'])
+                if 'target_language' in settings and settings['target_language'] != value['target_languages'][0]:
+                    raise ValueError('首选译文语言与语言列表不一致。')
+                value['target_language'] = value['target_languages'][0]
+            elif 'target_language' in settings:
+                value['target_languages'] = [target_language(settings['target_language'])]
+            source_language(value['source_language']); target_language(value['target_language'])
+            if not isinstance(value['enabled'], bool):
+                raise ValueError('实时翻译开关需为布尔值。')
+            conn.execute('''INSERT INTO translation_settings(meeting_id,source_language,target_language,enabled,target_languages) VALUES(?,?,?,?,?) ON CONFLICT(meeting_id)
+                            DO UPDATE SET source_language=excluded.source_language,
+                            target_language=excluded.target_language,enabled=excluded.enabled,target_languages=excluded.target_languages''',
+                         (meeting_id, value['source_language'], value['target_language'], int(value['enabled']), json.dumps(value['target_languages'])))
+            return value
+
+    def live_projection(self, meeting_id, limit=30):
+        """Bounded, meeting-owned display data; never exposes notes or attachments."""
+        with self.db() as conn:
+            row = self._meeting(conn, meeting_id)
+            result = self._meeting_public(conn, row)
+            result.pop('summary', None)
+            rows = [] if row['deleted_at'] is not None else conn.execute(
+                'SELECT * FROM segments WHERE meeting_id=? AND deleted_at IS NULL ORDER BY start_seconds DESC,created_at DESC,id DESC LIMIT ?',
+                (meeting_id, limit)).fetchall()
+            result['segments'] = [self._segment_public(segment, conn) for segment in reversed(rows)]
+            result['projection_limit'] = limit
+            return result
+
+    def translation_snapshot(self, meeting_id, segment_id, target):
+        target_language(target)
+        with self.db() as conn:
+            self._meeting(conn, meeting_id, live=True)
+            row = conn.execute('SELECT * FROM segments WHERE id=? AND meeting_id=? AND deleted_at IS NULL', (segment_id, meeting_id)).fetchone()
+            if not row:
+                raise ValueError('这段原文已删除或不属于本场会议。')
+            return {'meeting_id': meeting_id, 'segment_id': segment_id, 'target': target,
+                    'text': row['text'], 'source_hash': text_digest(row['text'])}
+
+    def save_translation(self, snapshot, *, text='', state='queued', error='', cancel_event=None):
+        with self.lock, self.db() as conn:
+            check_cancel(cancel_event)
+            self._meeting(conn, snapshot['meeting_id'], live=True)
+            row = conn.execute('SELECT text FROM segments WHERE id=? AND meeting_id=? AND deleted_at IS NULL',
+                               (snapshot['segment_id'], snapshot['meeting_id'])).fetchone()
+            if not row or text_digest(row['text']) != snapshot['source_hash']:
+                raise ValueError('原文已变化，旧译文未保存，请重新翻译。')
+            conn.execute('''INSERT INTO translations VALUES(?,?,?,?,?,?,?) ON CONFLICT(segment_id,target_language)
+                            DO UPDATE SET source_hash=excluded.source_hash,text=excluded.text,
+                            state=excluded.state,error=excluded.error,updated_at=excluded.updated_at''',
+                         (snapshot['segment_id'], snapshot['target'], snapshot['source_hash'], text, state, error, now()))
+
+    def cancel_translation(self, snapshot):
+        with self.lock, self.db() as conn:
+            conn.execute("UPDATE translations SET state='error',error='翻译已停止，可重新翻译。',updated_at=? WHERE segment_id=? AND target_language=? AND source_hash=? AND state IN ('queued','running')",
+                         (now(), snapshot['segment_id'], snapshot['target'], snapshot['source_hash']))
 
     @staticmethod
     def _source_public(conn, row):
@@ -139,10 +245,11 @@ class Store:
         return result
 
     def create_meeting(self, title=None):
+        automatic = title is None
         title = title_value(title) if title is not None else datetime.now().strftime('会议 %Y-%m-%d %H:%M')
         meeting_id, stamp = str(uuid.uuid4()), now()
         with self.db() as conn:
-            conn.execute('INSERT INTO meetings(id,title,created_at,updated_at) VALUES(?,?,?,?)', (meeting_id,title,stamp,stamp))
+            conn.execute('INSERT INTO meetings(id,title,created_at,updated_at,title_automatic) VALUES(?,?,?,?,?)', (meeting_id,title,stamp,stamp,int(automatic)))
         return self.get_meeting(meeting_id, detail=False)
 
     def list_meetings(self, trash=False):
@@ -156,7 +263,7 @@ class Store:
             result = self._meeting_public(conn, row)
             if detail:
                 result['note'] = row['note']
-                result['segments'] = [self._segment_public(s) for s in conn.execute('SELECT * FROM segments WHERE meeting_id=? AND deleted_at IS NULL ORDER BY start_seconds,created_at,id', (meeting_id,))]
+                result['segments'] = [self._segment_public(s, conn) for s in conn.execute('SELECT * FROM segments WHERE meeting_id=? AND deleted_at IS NULL ORDER BY start_seconds,created_at,id', (meeting_id,))]
                 result['attachments'] = [self._source_public(conn,s) for s in conn.execute("SELECT * FROM sources WHERE meeting_id=? AND kind='file' AND deleted_at IS NULL ORDER BY created_at", (meeting_id,))]
             return result
 
@@ -193,7 +300,7 @@ class Store:
             self._meeting(conn, meeting_id, live=True)
             conn.execute('UPDATE meetings SET '+','.join(k+'=?' for k in values)+',updated_at=? WHERE id=?', (*values.values(),now(),meeting_id))
             if 'title' in values:
-                conn.execute('UPDATE meetings SET content_version=content_version+1 WHERE id=?',(meeting_id,))
+                conn.execute('UPDATE meetings SET content_version=content_version+1,title_automatic=0 WHERE id=?',(meeting_id,))
             if 'note' in values:
                 self._invalidate_summary(conn, meeting_id)
                 source_id = self._text_source(conn, meeting_id, 'note', values['note'])
@@ -225,19 +332,19 @@ class Store:
             if request_id:
                 previous = conn.execute('SELECT * FROM segments WHERE meeting_id=? AND request_id=?',(meeting_id,request_id)).fetchone()
                 if previous:
-                    return self._segment_public(previous)
+                    return self._segment_public(previous, conn)
             self._invalidate_summary(conn, meeting_id)
             conn.execute('INSERT INTO segments(id,meeting_id,text,start_seconds,end_seconds,created_at,audio_path,request_id) VALUES(?,?,?,?,?,?,?,?)', (segment_id,meeting_id,text.strip(),start_seconds,end_seconds,created_at or now(),audio_path,request_id))
             source_id = self._text_source(conn, meeting_id, 'transcript', text.strip(), segment_id=segment_id)
         self.index_source(source_id)
         with self.db() as conn:
-            return self._segment_public(conn.execute('SELECT * FROM segments WHERE id=?', (segment_id,)).fetchone())
+            return self._segment_public(conn.execute('SELECT * FROM segments WHERE id=?', (segment_id,)).fetchone(), conn)
 
     def list_segments(self, meeting_id, trash=False):
         with self.db() as conn:
             self._meeting(conn, meeting_id)
             rows = conn.execute('SELECT * FROM segments WHERE meeting_id=? AND deleted_at IS '+('NOT NULL' if trash else 'NULL')+' ORDER BY start_seconds,created_at', (meeting_id,)).fetchall()
-            return [self._segment_public(row) for row in rows]
+            return [self._segment_public(row, conn) for row in rows]
 
     def edit_segment(self, meeting_id, segment_id, text):
         if not isinstance(text,str) or not text.strip() or len(text)>500_000:
@@ -254,7 +361,7 @@ class Store:
             source_id = self._text_source(conn,meeting_id,'transcript',text.strip(),segment_id=segment_id)
         self.index_source(source_id)
         with self.db() as conn:
-            return self._segment_public(conn.execute('SELECT * FROM segments WHERE id=?',(segment_id,)).fetchone())
+            return self._segment_public(conn.execute('SELECT * FROM segments WHERE id=?',(segment_id,)).fetchone(), conn)
 
     def segment_trash(self, meeting_id, segment_id, trash):
         source_id = None
@@ -425,17 +532,22 @@ class Store:
         for row in rows:
             for part in chunks(row['text'],size=1400,overlap=0):
                 units.append(f"[{len(units)+1}] {row['filename']}\n{part}")
-        return {'title':meeting['title'],'content_version':meeting['content_version'],'units':units}
+        return {'title':meeting['title'],'title_automatic':bool(meeting['title_automatic']),
+                'content_version':meeting['content_version'],'units':units}
 
-    def save_summary(self, meeting_id, summary, content_version,cancel_event=None):
+    def save_summary(self, meeting_id, summary, content_version,cancel_event=None, *, generated_title=None):
         if not isinstance(summary,str) or not summary.strip():
             raise ValueError('模型未生成有效摘要。')
+        if generated_title is not None:
+            generated_title = title_value(generated_title)
         with self.lock,self.db() as conn:
             check_cancel(cancel_event)
             row = self._meeting(conn,meeting_id,live=True)
             if row['content_version'] != content_version:
                 raise ValueError('生成摘要时会议资料已更新，请重新生成。')
-            conn.execute('UPDATE meetings SET summary=?,updated_at=? WHERE id=?',(summary,now(),meeting_id))
+            title = generated_title if generated_title is not None and row['title_automatic'] else row['title']
+            conn.execute('UPDATE meetings SET summary=?,title=?,content_version=content_version+?,updated_at=? WHERE id=?',
+                         (summary,title,int(title != row['title']),now(),meeting_id))
             source_id = self._text_source(conn,meeting_id,'summary',summary)
         self.index_source(source_id)
         return self.get_meeting(meeting_id,detail=False)
@@ -624,7 +736,14 @@ class Store:
         for name,content in (('会议笔记',meeting['note']),('中文摘要',meeting['summary'])):
             if content:
                 parts.append(f'## {name}\n\n{content}')
-        parts.append('## 会议转写\n\n'+'\n\n'.join(f"### {segment['start_seconds']:.1f}–{segment['end_seconds']:.1f} 秒\n\n{segment['text']}" for segment in meeting['segments']))
+        transcript = []
+        for segment in meeting['segments']:
+            value = f"### {segment['start_seconds']:.1f}–{segment['end_seconds']:.1f} 秒\n\n{segment['text']}"
+            for translated in segment['translations']:
+                if translated['state'] == 'done':
+                    value += f"\n\n**译文（{translated['target_language']}）**\n\n{translated['text']}"
+            transcript.append(value)
+        parts.append('## 会议原文与译文\n\n'+'\n\n'.join(transcript))
         if meeting['attachments']:
             parts.append('## 附件\n\n'+'\n'.join(f"- {source['filename']}（{source['extraction_note']}）" for source in meeting['attachments']))
         safe_name = re.sub(r'[/\\:\x00-\x1f]', '_', meeting['title'])[:100]
@@ -785,9 +904,10 @@ class Store:
             conn.execute("INSERT INTO jobs(id,kind,request_key,state,created_at,updated_at) VALUES(?,?,?,'queued',?,?)",(job_id,kind,request_key,stamp,stamp))
         return job_id
 
-    def find_job(self, request_key):
+    def find_job(self, request_key, completed=True):
         with self.db() as conn:
-            row = conn.execute("SELECT id FROM jobs WHERE request_key=? AND state IN ('queued','running','done') ORDER BY created_at DESC LIMIT 1",(request_key,)).fetchone()
+            states = "('queued','running','done')" if completed else "('queued','running')"
+            row = conn.execute('SELECT id FROM jobs WHERE request_key=? AND state IN '+states+' ORDER BY created_at DESC LIMIT 1',(request_key,)).fetchone()
             return row['id'] if row else None
 
     def update_job(self, job_id, **values):
@@ -809,4 +929,5 @@ class Store:
 
     def recover_jobs(self):
         with self.db() as conn:
+            conn.execute("UPDATE translations SET state='error',error='上次翻译已中断，请重试。' WHERE state IN ('queued','running')")
             conn.execute("UPDATE jobs SET state='cancelled',message='上次运行已中断，可重新提交。',partial='',result=NULL,updated_at=? WHERE state IN ('queued','running')",(now(),))

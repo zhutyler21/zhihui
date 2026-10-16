@@ -3,79 +3,96 @@ import AppKit
 
 struct MeetingDetailView: View {
     @ObservedObject var model: AppModel
-    @State private var tab = "转写"; @State private var trashConfirmation = false
+    @Environment(\.openWindow) private var openWindow
+    @State private var trashConfirmation = false
+    @State private var languageMeeting: Meeting?
+    @State private var liveMeetingID: String?
+    @State private var changingWorkspace = false
     var body: some View {
         Group {
             if let meeting = model.detail {
-                VStack(alignment: .leading, spacing: 0) {
-                    header(meeting)
-                    recordingBar
-                    Picker("会议内容", selection: $tab) { ForEach(["转写", "笔记", "中文纪要", "附件"], id: \.self) { name in Text(name).tag(name) } }
-                        .pickerStyle(.segmented).labelsHidden().font(Design.Typography.callout).tint(Design.accentFill).padding(.horizontal, 24).padding(.vertical, 16)
-                    Divider().overlay(Design.line).padding(.horizontal, 24)
-                    tabContent(meeting).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                ZStack(alignment: .topLeading) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        header(meeting)
+                        MeetingContentWorkspace(model: model, meeting: meeting).id(meeting.id)
+                    }
+                    .opacity(liveMeetingID == meeting.id ? 0 : 1)
+                    .allowsHitTesting(liveMeetingID != meeting.id)
+                    .accessibilityHidden(liveMeetingID == meeting.id)
+                    .disabled(liveMeetingID == meeting.id)
+                    if liveMeetingID == meeting.id {
+                        MeetingLiveView(model: model, meeting: meeting,
+                            returnToMaterials: { changeWorkspace(live: false, meetingID: meeting.id) },
+                            showLanguages: { languageMeeting = meeting },
+                            openDisplay: { openWindow(id: "translation-display", value: meeting.id) })
+                    }
                 }.background(Design.surface, in: RoundedRectangle(cornerRadius: 16))
                     .confirmationDialog("将这场会议移入回收站？", isPresented: $trashConfirmation, titleVisibility: .visible) { Button("移入回收站", role: .destructive) { Task { await model.moveToTrash(meeting) } }; Button("取消", role: .cancel) {} } message: { Text("会议、转写和附件仍会保留，可以在回收站恢复。") }
             } else {
-                VStack(spacing: 0) { EmptyState(icon: "waveform", title: "记录每一次讨论", message: "选择左侧会议，或新建会议开始录音。中文转写、纪要和资料都留在本机。", fillsSpace: false); Button("新建会议") { Task { await model.newMeeting() } }.buttonStyle(PrimaryButton()) }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 35).background(Design.surface, in: RoundedRectangle(cornerRadius: 22))
+                VStack(spacing: 0) { EmptyState(icon: "waveform", title: "记录每一次讨论", message: "选择左侧会议，或点击右上角“新建会议”。中文转写、纪要和资料都留在本机。", fillsSpace: false) }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 35).background(Design.surface, in: RoundedRectangle(cornerRadius: 22))
             }
-        }.disabled(model.isSwitchingMeeting)
+        }.sheet(item: $languageMeeting) { meeting in TranslationSettingsSheet(model: model, meeting: meeting).id(meeting.id) }
+            .disabled(model.isSwitchingMeeting || changingWorkspace)
+            .onChange(of: model.selectedMeetingID) { _, _ in liveMeetingID = nil }
             .overlay {
-                if model.isSwitchingMeeting {
-                    HStack(spacing: 12) { ProgressView().controlSize(.small); Text("正在打开会议，笔记正在妥善保存").font(Design.Typography.callout.weight(.medium)) }
+                if model.isSwitchingMeeting || changingWorkspace {
+                    HStack(spacing: 12) { ProgressView().controlSize(.small); Text(changingWorkspace ? "正在保存笔记…" : "正在打开会议，笔记正在妥善保存").font(Design.Typography.callout.weight(.medium)) }
                         .padding(.horizontal, 20).padding(.vertical, 15).background(Design.surface, in: RoundedRectangle(cornerRadius: 13))
                         .shadow(color: Design.ink.opacity(0.08), radius: 18, y: 4)
                 }
             }
     }
+    private func changeWorkspace(live: Bool, meetingID: String) {
+        guard !changingWorkspace else { return }
+        changingWorkspace = true
+        Task { @MainActor in
+            defer { changingWorkspace = false }
+            do {
+                try await model.saveNotesIfNeeded()
+                guard model.selectedMeetingID == meetingID else { return }
+                liveMeetingID = live ? meetingID : nil
+            } catch { model.showError(error, title: "笔记尚未保存") }
+        }
+    }
     private func header(_ meeting: Meeting) -> some View {
-        VStack(alignment: .leading, spacing: 15) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("会议名称", text: $model.titleDraft).font(Design.Typography.title2.weight(.semibold)).textFieldStyle(.plain).onSubmit { Task { await model.renameMeeting() } }.accessibilityLabel("会议名称")
-                    HStack(spacing: 9) { Text(dateText(meeting.createdAt)); Text("·"); Text("\(meeting.segmentCount) 段转写"); if model.titleDraft != meeting.title { Button("保存名称") { Task { await model.renameMeeting() } }.buttonStyle(.plain).foregroundStyle(Design.accent) } }.font(Design.Typography.caption).foregroundStyle(Design.muted)
-                }
-                Spacer(minLength: 0)
-                Menu {
-                    Button("导出会议纪要…") { Task { await model.exportMeeting() } }
-                    Button("导入音频…") { model.importAudio() }.disabled(model.recording || model.startingRecording)
-                    Divider()
-                    Button("移入回收站", role: .destructive) { trashConfirmation = true }
-                } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }.menuStyle(.borderlessButton).fixedSize().accessibilityLabel("会议更多操作")
+        VStack(alignment: .leading, spacing: 16) {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("会议名称", text: $model.titleDraft).font(Design.Typography.title2.weight(.semibold)).textFieldStyle(.plain).onSubmit { Task { await model.renameMeeting() } }.accessibilityLabel("会议名称")
+                HStack(spacing: 9) {
+                    Text(dateText(meeting.createdAt)); Text("·"); Text("\(meeting.segmentCount) 段转写")
+                    if model.titleDraft != meeting.title {
+                        Button("保存名称") { Task { await model.renameMeeting() } }.buttonStyle(.plain).foregroundStyle(Design.accent)
+                    }
+                }.font(Design.Typography.caption).foregroundStyle(Design.muted)
             }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { recordingActions(meeting); Spacer(minLength: 8); recordingPicker }
-                    .fixedSize(horizontal: true, vertical: false)
-                VStack(alignment: .leading, spacing: 12) { recordingActions(meeting); recordingPicker }
-            }
-        }.padding(24)
-    }
-    private func recordingActions(_ meeting: Meeting) -> some View {
-        HStack(spacing: 10) {
-            if model.recordingMeetingID == meeting.id && model.recording {
-                Button { Task { await model.stopRecording() } } label: { Label("停止录音", systemImage: "stop.fill") }.buttonStyle(PrimaryButton())
-            } else {
-                Button { Task { await model.startRecording() } } label: { Label(model.startingRecording ? "正在请求权限" : "开始录音", systemImage: "mic.fill") }.buttonStyle(PrimaryButton()).disabled(model.recording || model.startingRecording)
-            }
-            Button { model.askCurrentMeeting() } label: { Label("问这场会议", systemImage: "bubble.left") }.buttonStyle(QuietButton())
+            Spacer(minLength: 0)
+            Menu {
+                Button("问这场会议") { model.askCurrentMeeting() }
+                Button("导出会议纪要…") { Task { await model.exportMeeting() } }
+                Button("完成转写并整理纪要") { Task { await model.finishAndSummarize(meeting.id) } }.disabled(model.finishingMeetings.contains(meeting.id))
+                Divider()
+                Button("移入回收站", role: .destructive) { trashConfirmation = true }
+            } label: { Image(systemName: "ellipsis").frame(width: 24, height: 24) }
+                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("会议更多操作")
         }
-    }
-    private var recordingPicker: some View {
-        Picker("声音来源", selection: $model.recordingMode) { ForEach(RecordingMode.allCases) { mode in Text(mode.rawValue).tag(mode) } }
-            .labelsHidden().font(Design.Typography.callout).frame(maxWidth: 180).tint(Design.accent).disabled(model.recording || model.startingRecording)
-            .help("麦克风记录现场声音；系统声音记录 Mac 内播放的声音；两者混音适合戴耳机的在线会议。")
-    }
-    @ViewBuilder private var recordingBar: some View {
-        if model.recording {
-            HStack(spacing: 10) { Image(systemName: "record.circle.fill").foregroundStyle(Design.recording); Text("正在录制\(model.recordingMode.rawValue)"); Text(timeText(model.recordingSeconds)).monospacedDigit(); Spacer(); Text("音频持续保存到本机").foregroundStyle(Design.muted) }.font(Design.Typography.caption).padding(14).background(Design.soft, in: RoundedRectangle(cornerRadius: 12)).padding(.horizontal, 24)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) { MeetingCaptureActions(model: model, meetingID: meeting.id); Spacer(minLength: 12); liveRoomButton(meeting) }
+            VStack(alignment: .leading, spacing: 12) { MeetingCaptureActions(model: model, meetingID: meeting.id); liveRoomButton(meeting) }
         }
+        captureStatus(meeting)
+        }.padding(.horizontal, Design.Spacing.contentInset).padding(.top, Design.Spacing.contentInset).padding(.bottom, 12)
     }
-    @ViewBuilder private func tabContent(_ meeting: Meeting) -> some View {
-        switch tab {
-        case "笔记": MarkdownNotesView(model: model).id(meeting.id)
-        case "中文纪要": SummaryView(model: model, meeting: meeting)
-        case "附件": AttachmentsView(model: model, meeting: meeting)
-        default: TranscriptView(model: model, meeting: meeting)
+    private func liveRoomButton(_ meeting: Meeting) -> some View {
+        Button("实时会场", systemImage: "captions.bubble") { changeWorkspace(live: true, meetingID: meeting.id) }
+            .buttonStyle(QuietButton()).help("进入实时翻译和大屏控制；录音可直接在会议页开始")
+    }
+    @ViewBuilder private func captureStatus(_ meeting: Meeting) -> some View {
+        if model.finishingMeetings.contains(meeting.id) {
+            Label("正在完成转写并整理纪要", systemImage: "hourglass")
+                .font(Design.Typography.caption).foregroundStyle(Design.muted)
+        } else if model.recording && model.recordingMeetingID != meeting.id {
+            Text("另一场会议正在录音").font(Design.Typography.caption).foregroundStyle(Design.muted)
         }
     }
 }
@@ -83,6 +100,7 @@ struct MeetingDetailView: View {
 struct TranscriptView: View {
     @ObservedObject var model: AppModel
     let meeting: Meeting
+    var compactEmptyState = false
     @State private var presented: TranscriptSheet?
     private enum TranscriptSheet: Identifiable {
         case edit(Segment), deleted(Meeting)
@@ -91,18 +109,25 @@ struct TranscriptView: View {
             case .deleted(let meeting): return "deleted-" + meeting.id }
         }
     }
+    private var recordingThisMeeting: Bool { model.recordingMeetingID == meeting.id && model.recording }
+    private var emptyMessage: String {
+        if recordingThisMeeting { return "声音正在保存，转写完成后会出现在这里。" }
+        if model.startingRecording && model.recordingMeetingID == meeting.id { return "正在准备录音，请稍候。" }
+        return "使用上方的录音或导入按钮开始记录。"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 12) {
                 Text("转写片段").font(Design.Typography.headline)
                 Text("\(meeting.segments.count) 段").font(Design.Typography.caption).foregroundStyle(Design.muted)
                 Spacer(minLength: 8)
-                Button { presented = .deleted(meeting) } label: {
+                if !model.trashSegments.isEmpty { Button { presented = .deleted(meeting) } label: {
                     Label("已删除片段（\(model.trashSegments.count)）", systemImage: "trash")
                 }
                 .buttonStyle(.borderless).font(Design.Typography.caption).foregroundStyle(Design.muted)
                 .help("查看和恢复本场会议已删除的转写片段")
                 .disabled(model.isSwitchingMeeting)
+                }
             }.padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 12)
             if meeting.segments.isEmpty {
                 if !model.trashSegments.isEmpty {
@@ -112,10 +137,17 @@ struct TranscriptView: View {
                         Button("查看已删除片段") { presented = .deleted(meeting) }.buttonStyle(QuietButton())
                     }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 24)
                 } else {
-                    VStack(spacing: 0) {
-                        EmptyState(icon: "waveform", title: "等待第一段转写", message: "点击开始录音，或导入音频。已保存的音频会逐段转换成中文文字。", fillsSpace: false)
-                        Button("导入音频") { model.importAudio() }.buttonStyle(QuietButton())
+                    if compactEmptyState {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(recordingThisMeeting ? "正在聆听，转写将逐段出现" : "从声音开始记录")
+                                .font(Design.Typography.headline).foregroundStyle(Design.accent)
+                            Text(emptyMessage).font(Design.Typography.callout).foregroundStyle(Design.muted)
+                        }.padding(.horizontal, 24).padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    } else { VStack(spacing: 0) {
+                        EmptyState(icon: "waveform", title: recordingThisMeeting ? "正在聆听，转写将逐段出现" : "从声音开始记录", message: emptyMessage, fillsSpace: false)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity).padding(.bottom, 24)
+                    }
                 }
             } else {
                 ScrollView {
@@ -135,6 +167,9 @@ struct TranscriptView: View {
                                 }
                                 Text(segment.text).font(Design.Typography.body).lineSpacing(7).textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
+                                if meeting.translation.enabled {
+                                    ForEach(meeting.translation.targetLanguages, id: \.self) { target in SegmentTranslationView(segment: segment, target: target) }
+                                }
                             }
                             Divider().overlay(Design.line)
                         }

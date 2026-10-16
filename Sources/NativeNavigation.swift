@@ -12,6 +12,10 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 184, ideal: 208, max: 260)
         } detail: {
             VStack(spacing: 0) {
+                if model.recording || model.stoppingRecording {
+                    ActiveRecordingBar(model: model)
+                    Divider()
+                }
                 if model.starting { startup }
                 else if !model.ready { disconnected }
                 else { sectionContent }
@@ -57,7 +61,7 @@ struct RootView: View {
         case .meetings:
             HSplitView {
                 MeetingList(model: model)
-                    .frame(minWidth: 238, idealWidth: 282, maxWidth: 390, maxHeight: .infinity)
+                    .frame(minWidth: 250, idealWidth: 282, maxWidth: 330, maxHeight: .infinity)
                 MeetingDetailView(model: model).padding(18)
                     .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -71,15 +75,19 @@ struct RootView: View {
         ToolbarItemGroup(placement: .primaryAction) {
             if model.section == .library {
                 Button { model.importFiles(meetingID: nil) } label: { Label("添加资料", systemImage: "plus") }
-                    .font(Design.Typography.callout).disabled(!model.ready).help("添加本机资料到知识库")
-            } else {
-                Button { Task { await model.newMeeting() } } label: { Label("新建会议", systemImage: "square.and.pencil") }
-                    .font(Design.Typography.callout).disabled(!model.ready).help("新建会议（⌘N）")
+                    .labelStyle(.titleAndIcon).font(Design.Typography.callout).disabled(!model.ready).help("添加本机资料到知识库")
             }
             Button { model.modelDetails.toggle() } label: { Label("本地模型", systemImage: "cpu") }
                 .font(Design.Typography.callout).help("查看本地模型状态")
                 .popover(isPresented: $model.modelDetails) { ModelStatusView(model: model) }
             AppearanceToggleButton()
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Button { Task { await model.newMeeting() } } label: {
+                Label("新建会议", systemImage: "plus").labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(PrimaryButton()).disabled(!model.ready || model.isSwitchingMeeting)
+            .help("新建会议（⌘N）").accessibilityIdentifier("meeting.new")
         }
     }
     private var startup: some View {
@@ -145,22 +153,22 @@ struct SidebarView: View {
                     Text("本地会议与知识").font(Design.Typography.caption).foregroundStyle(Design.muted).lineLimit(1)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 17).padding(.top, 20).padding(.bottom, 20)
+                .padding(.horizontal, Design.Spacing.sidebarInset).padding(.top, 24).padding(.bottom, 24)
             List(selection: selection) {
                 Section {
                     ForEach(AppSection.allCases.filter { $0 != .trash }) { section in
                         Label(section.rawValue, systemImage: section.icon)
-                            .font(Design.Typography.body.weight(.medium)).padding(.vertical, 7)
+                            .font(Design.Typography.body.weight(.medium)).padding(.vertical, 7).padding(.leading, 4)
                             .symbolRenderingMode(.hierarchical)
                             .tag(section)
                             .accessibilityLabel(section.rawValue)
                     }
                 } header: { Text("工作空间").font(Design.Typography.caption.weight(.medium)) }
             }.listStyle(.sidebar).scrollContentBackground(.hidden)
+                .padding(.horizontal, 8)
                 .environment(\.defaultMinListRowHeight, 44)
                 .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
             Spacer(minLength: 12)
-            if model.recording { SidebarRecording(model: model).padding(.horizontal, 12).padding(.bottom, 16) }
             Divider().padding(.horizontal, 17).padding(.bottom, 10)
             Button { selection.wrappedValue = .trash } label: {
                 Label("回收站", systemImage: "trash")
@@ -187,18 +195,6 @@ struct SidebarView: View {
         .onChange(of: model.selectedMeetingID) { navigationTicket = UUID() }
     }
 }
-private struct SidebarRecording: View {
-    @ObservedObject var model: AppModel
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("正在录音", systemImage: "record.circle.fill").font(Design.Typography.callout.weight(.medium)).foregroundStyle(Design.recording)
-            Text(timeText(model.recordingSeconds)).font(Design.Typography.title2.monospacedDigit())
-            Button("停止并保存") { Task { await model.stopRecording() } }.buttonStyle(QuietButton())
-        }.padding(15).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Design.surface, in: RoundedRectangle(cornerRadius: 12))
-    }
-}
-
 struct MeetingList: View {
     @ObservedObject var model: AppModel
     @State private var selectedRow: String?
@@ -225,7 +221,7 @@ struct MeetingList: View {
                 TextField("搜索会议和转写", text: $model.search).textFieldStyle(.plain).accessibilityLabel("搜索会议和转写")
                 if model.searching { ProgressView().controlSize(.mini) }
             }.font(Design.Typography.callout).padding(12).background(Design.surface, in: RoundedRectangle(cornerRadius: 10))
-                .padding(.horizontal, 15).padding(.bottom, 13)
+                .padding(.horizontal, Design.Spacing.listInset).padding(.bottom, 13)
                 .onChange(of: model.search) { model.searchChanged() }
             if model.meetings.isEmpty {
                 EmptyState(icon: model.search.isEmpty ? "waveform" : "magnifyingglass",
@@ -236,6 +232,7 @@ struct MeetingList: View {
                     MeetingRow(meeting: meeting)
                         .tag(meeting.id).help(meeting.title)
                 }.listStyle(.inset).scrollContentBackground(.hidden)
+                    .padding(.horizontal, 12)
             }
             Divider()
             Button { model.importForesight() } label: { Label("导入 Foresight 会议", systemImage: "square.and.arrow.down") }
@@ -289,6 +286,7 @@ struct AppearanceToggleButton: View {
 }
 
 struct AppearanceSettingsView: View {
+    @ObservedObject var updater: AppUpdater
     @AppStorage("appearanceMode") private var appearanceMode = "system"
     var body: some View {
         Form {
@@ -300,8 +298,9 @@ struct AppearanceSettingsView: View {
                 }.pickerStyle(.segmented).tint(Design.accentFill)
                 Text("只改变知会的显示方式，不修改 macOS 的系统外观。").font(Design.Typography.callout).foregroundStyle(Design.muted)
             } header: { Text("界面外观") }
-        }.formStyle(.grouped).font(Design.Typography.callout).padding(14).frame(width: 440, height: 205)
-            .navigationTitle("外观设置")
+            UpdateSettingsSection(updater: updater)
+        }.formStyle(.grouped).font(Design.Typography.body).padding(14).frame(width: 520, height: 540)
+            .navigationTitle("知会设置")
             .tint(Design.accent)
             .preferredColorScheme(appearanceMode == "light" ? .light : appearanceMode == "dark" ? .dark : nil)
     }

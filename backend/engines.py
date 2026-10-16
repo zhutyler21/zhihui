@@ -24,12 +24,15 @@ class LocalModels:
         os.environ['DO_NOT_TRACK'] = '1'
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
         self._asr = None
+        self._asr_language = None
         self._embedding = None
         self._llm = None
         self._tokenizer = None
         self._asr_lock = threading.Lock()
         self._embed_lock = threading.Lock()
         self._llm_lock = threading.Lock()
+        self._translation_condition = threading.Condition()
+        self._translation_waiters = 0
 
     @staticmethod
     def app_bundle(root: Path) -> Path | None:
@@ -56,7 +59,7 @@ class LocalModels:
 
     def status(self) -> dict:
         return {
-            'asr': {'name': 'SenseVoice 中文转写',
+            'asr': {'name': 'SenseVoice · 中英日韩粤语转写',
                     'ready': all((self.models / 'sensevoice' / name).is_file()
                                  for name in ('model.int8.onnx', 'tokens.txt', 'silero_vad.onnx')),
                     'loaded': self._asr is not None},
@@ -100,7 +103,9 @@ class LocalModels:
                 )
             return [vector.tolist() for vector in self._embedding.embed(texts, batch_size=24)]
 
-    def transcribe(self, path: str, cancel_event=None) -> dict:
+    def transcribe(self, path: str, cancel_event=None, language='auto') -> dict:
+        from .translation import source_language
+        source_language(language)
         self._check_cancel(cancel_event)
         audio = Path(path).expanduser().resolve()
         if not audio.is_file():
@@ -123,12 +128,13 @@ class LocalModels:
             try:
                 import numpy as np
                 import sherpa_onnx
-                if self._asr is None:
+                if self._asr is None or self._asr_language != language:
                     self._asr = sherpa_onnx.OfflineRecognizer.from_sense_voice(
                         model=str(self.models / 'sensevoice/model.int8.onnx'),
                         tokens=str(self.models / 'sensevoice/tokens.txt'),
-                        num_threads=3, language='auto', use_itn=True, provider='cpu',
+                        num_threads=3, language=language, use_itn=True, provider='cpu',
                     )
+                    self._asr_language = language
                 config = sherpa_onnx.VadModelConfig()
                 config.silero_vad.model = str(self.models / 'sensevoice/silero_vad.onnx')
                 config.silero_vad.threshold = 0.5
@@ -224,12 +230,56 @@ class LocalModels:
             process.stdout.close()
             process.stderr.close()
 
+    def translate(self, text, target, source='auto', cancel_event=None):
+        from .translation import translation_prompt, missing_numbers, missing_time_expressions, target_script_issue, ambiguous_currency_issue
+        from .documents import chunks
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError('没有可翻译的原文。')
+        parts = []
+        for part in chunks(text, size=1000, overlap=0):
+            self._check_cancel(cancel_event)
+            prompt, system = translation_prompt(part, target, source)
+            for attempt in range(2):
+                result = self.generate(prompt, system, cancel_event=cancel_event,
+                                       max_tokens=min(4096, max(256, len(part) * 4)),
+                                       output_language=None, translation=True)
+                missing = missing_numbers(part, result) + missing_time_expressions(part, result, target)
+                if issue := target_script_issue(result, target):
+                    missing.append(issue)
+                if issue := ambiguous_currency_issue(part, result):
+                    missing.append(issue)
+                if not missing:
+                    break
+                system += '\nYour previous output changed or omitted required values. You MUST preserve these quantities and relative time expressions accurately: ' + ', '.join(missing)
+            if missing:
+                raise RuntimeError('译文的语言、数字或时间核对未通过，未保存该译文；请校对原文或重试。')
+            if not result.strip():
+                raise RuntimeError('没有生成译文，原文已保留，请重试。')
+            parts.append(result)
+        return '\n'.join(parts)
+
     def generate(self, prompt: str, system: str, on_chunk=None, cancel_event=None,
-                 max_tokens=1600) -> str:
+                 max_tokens=1600, output_language='zh', translation=False) -> str:
         self._check_cancel(cancel_event)
         if not self.status()['llm']['ready']:
             raise RuntimeError('本地语言模型未准备，请运行项目的模型安装脚本。')
-        self._wait_lock(self._llm_lock, cancel_event)
+        # A single loaded LLM serves both tasks. Waiting translations go first;
+        # an already-running generation finishes cooperatively, never concurrently.
+        with self._translation_condition:
+            if translation:
+                self._translation_waiters += 1
+        try:
+            while True:
+                self._check_cancel(cancel_event)
+                with self._translation_condition:
+                    may_start = translation or self._translation_waiters == 0
+                if may_start and self._llm_lock.acquire(timeout=0.1):
+                    break
+                time.sleep(0.02)
+        finally:
+            if translation:
+                with self._translation_condition:
+                    self._translation_waiters -= 1
         try:
             from mlx_lm import load, stream_generate
             from mlx_lm.sample_utils import make_sampler
@@ -238,7 +288,7 @@ class LocalModels:
                 self._llm, self._tokenizer = load(str(self.models / 'qwen3-4b'))
             self._check_cancel(cancel_event)
             messages = [
-                {'role': 'system', 'content': system + '\n请使用自然、准确的简体中文。资料缺失时明确说明。'},
+                {'role': 'system', 'content': system + ('\n请使用自然、准确的简体中文。资料缺失时明确说明。' if output_language == 'zh' else '')},
                 {'role': 'user', 'content': prompt},
             ]
             formatted = self._tokenizer.apply_chat_template(
@@ -249,20 +299,24 @@ class LocalModels:
                 raise RuntimeError('本次参考内容过长，请缩小范围后重试。')
             iterator = stream_generate(self._llm, self._tokenizer, formatted,
                                        max_tokens=min(max(int(max_tokens), 16), 4096),
-                                       sampler=make_sampler(temp=0.15, top_p=0.85),
+                                       sampler=make_sampler(temp=0 if translation else 0.15, top_p=0.85),
                                        prefill_step_size=512,
                                        prompt_progress_callback=lambda done, total: self._check_cancel(cancel_event))
             parts = []
+            truncated = False
             try:
                 for response in iterator:
                     self._check_cancel(cancel_event)
                     parts.append(response.text)
+                    truncated = getattr(response, 'finish_reason', None) == 'length'
                     if on_chunk:
                         on_chunk(response.text)
             finally:
                 iterator.close()
                 mx.clear_cache()
             self._check_cancel(cancel_event)
+            if translation and truncated:
+                raise RuntimeError('这段译文超过处理长度，未保存不完整结果。请缩短原文后重试。')
             return ''.join(parts).strip()
         finally:
             self._llm_lock.release()

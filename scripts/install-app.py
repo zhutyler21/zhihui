@@ -22,8 +22,8 @@ SOURCE = ROOT / 'dist/知会.app'
 TARGET = Path.home() / 'Applications/知会.app'
 MODEL_TARGET = Path.home() / 'Library/Application Support/知会/models'
 IDENTIFIER = 'io.local.zhihui.meetings'
-VERSION = '0.5.0'
-BUILD = '16'
+VERSION = '0.8.0'
+BUILD = '21'
 
 
 def sha256(path):

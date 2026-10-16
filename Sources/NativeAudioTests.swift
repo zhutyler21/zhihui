@@ -33,6 +33,19 @@ enum NativeSelfTest {
         guard abs(sampleCount - 380000) <= 64 else { throw APIError(message: "录音丢失样本：预期380000，实际\(sampleCount)") }
         let mixed = try verifyMixed(directory: root.appendingPathComponent("mixed", isDirectory: true), format: format)
         let system = try verifySystemGap(directory: root.appendingPathComponent("system-gap", isDirectory: true), format: format)
+        let live = root.appendingPathComponent("live-translation", isDirectory: true)
+        try FileManager.default.createDirectory(at: live, withIntermediateDirectories: true)
+        var liveChunks: [AudioChunk] = []
+        AudioRecorder().testFeed(buffers, directory: live, liveTranslation: true) { liveChunks.append($0) }
+        var liveFrames = 0
+        for chunk in liveChunks {
+            guard abs(chunk.startSeconds - Double(liveFrames) / 16000) < 0.0001,
+                  chunk.durationSeconds <= 6 else { throw APIError(message: "实时翻译音频时间不连续或延迟超过六秒") }
+            liveFrames += Int(try AVAudioFile(forReading: URL(fileURLWithPath: chunk.path)).length)
+        }
+        guard liveChunks.count == 4, liveFrames == sampleCount else { throw APIError(message: "实时翻译切块丢失尾段或采样") }
+        guard AudioRecorder.translationBoundary(Array(repeating: Float(0), count: 32000)[...]) == 32000,
+              AudioRecorder.translationBoundary(Array(repeating: Float(0.1), count: 32000)[...]) == nil else { throw APIError(message: "停顿与连续讲话边界不正确") }
         let receipt: JSONObject = ["input_sample_rate": 48000, "input_frames": totalInput, "output_sample_rate": 16000, "output_frames": sampleCount, "chunks": chunks.map { ["path": $0.path, "start_seconds": $0.startSeconds, "duration_seconds": $0.durationSeconds] }, "mixed_capture": mixed, "system_silent_gap": system]
         try JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys]).write(to: root.appendingPathComponent("receipt.json"), options: .atomic)
     }

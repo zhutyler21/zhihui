@@ -15,7 +15,11 @@ import uuid
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
-NAME = 'Zhihui-v0.5.0-macOS-arm64.dmg'
+APP_INFO = ROOT / 'dist/知会.app/Contents/Info.plist'
+APP_VERSION = plistlib.loads(APP_INFO.read_bytes())['CFBundleShortVersionString'] if APP_INFO.is_file() else None
+if APP_VERSION is not None and not re.fullmatch(r'\d+(?:\.\d+){1,2}', APP_VERSION):
+    raise RuntimeError('应用版本格式不合法。')
+NAME = 'Zhihui-v' + (APP_VERSION or 'unbuilt') + '-macOS-arm64.dmg'
 OUTPUT = ROOT / 'dist' / NAME
 OWNER = 'io.local.zhihui.meetings'
 

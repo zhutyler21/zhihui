@@ -26,9 +26,9 @@ struct AudioQueueState {
         guard !pending.contains(where: { $0.id == item.id }) else { return }
         pending.append(item); rememberEnd(item.meetingID, item.startSeconds + max(0, item.durationSeconds))
     }
-    mutating func enqueueImports(meetingID: String, paths: [String], savedEnd: Double) {
+    mutating func enqueueImports(meetingID: String, paths: [String], savedEnd: Double, sourceLanguage: String? = nil, translationTarget: String? = nil, translationTargets: [String]? = nil) {
         let start = baseOffset(meetingID: meetingID, savedEnd: savedEnd)
-        for path in paths { pending.append(PendingTranscription(id: UUID().uuidString, meetingID: meetingID, path: path, startSeconds: start, durationSeconds: 0)) }
+        for path in paths { pending.append(PendingTranscription(id: UUID().uuidString, meetingID: meetingID, path: path, startSeconds: start, durationSeconds: 0, sourceLanguage: sourceLanguage, translationTarget: translationTarget, translationTargets: translationTargets)) }
     }
     mutating func complete(_ id: String, actualDuration: Double) throws {
         guard let index = pending.firstIndex(where: { $0.id == id }) else { return }

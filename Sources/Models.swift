@@ -17,6 +17,7 @@ struct Meeting: Identifiable, Hashable {
     var id: String; var title: String; var createdAt: Double; var updatedAt: Double
     var deletedAt: Double?; var segmentCount: Int; var attachmentCount: Int; var summary: String
     var note: String; var segments: [Segment]; var attachments: [SourceFile]
+    var translation: TranslationSettings
     init(_ json: JSONObject) {
         id = json["id"] as? String ?? ""; title = json["title"] as? String ?? "未命名会议"
         createdAt = number(json["created_at"]); updatedAt = number(json["updated_at"])
@@ -25,14 +26,41 @@ struct Meeting: Identifiable, Hashable {
         summary = json["summary"] as? String ?? ""; note = json["note"] as? String ?? ""
         segments = (json["segments"] as? [JSONObject] ?? []).map(Segment.init)
         attachments = (json["attachments"] as? [JSONObject] ?? []).map(SourceFile.init)
+        translation = TranslationSettings(json["translation"] as? JSONObject ?? [:])
     }
 }
 struct Segment: Identifiable, Hashable {
     var id: String; var text: String; var start: Double; var end: Double; var createdAt: Double
+    var translations: [SegmentTranslation]
     init(_ json: JSONObject) {
         id = json["id"] as? String ?? ""; text = json["text"] as? String ?? ""
         start = number(json["start_seconds"]); end = number(json["end_seconds"]); createdAt = number(json["created_at"])
+        translations = (json["translations"] as? [JSONObject] ?? []).map(SegmentTranslation.init)
     }
+}
+struct TranslationSettings: Hashable {
+    var sourceLanguage: String; var targetLanguages: [String]; var enabled: Bool
+    var targetLanguage: String { targetLanguages.first ?? "en" }
+    init(_ json: JSONObject = [:]) {
+        sourceLanguage = json["source_language"] as? String ?? "auto"
+        let targets = json["target_languages"] as? [String] ?? []
+        targetLanguages = targets.isEmpty ? [json["target_language"] as? String ?? "en"] : targets
+        enabled = json["enabled"] as? Bool ?? false
+    }
+}
+struct SegmentTranslation: Hashable {
+    var targetLanguage: String; var text: String; var state: String; var error: String
+    init(_ json: JSONObject) {
+        targetLanguage = json["target_language"] as? String ?? ""
+        text = json["text"] as? String ?? ""; state = json["state"] as? String ?? ""
+        error = json["error"] as? String ?? ""
+    }
+}
+enum MeetingLanguages {
+    static let sources = [("auto", "自动识别"), ("zh", "中文"), ("en", "英语"), ("ja", "日语"), ("ko", "韩语"), ("yue", "粤语")]
+    static let targets = [("zh", "简体中文"), ("en", "English"), ("ja", "日本語"), ("ko", "한국어")]
+    static func targetName(_ code: String) -> String { targets.first { $0.0 == code }?.1 ?? code }
+    static func sourceName(_ code: String) -> String { sources.first { $0.0 == code }?.1 ?? code }
 }
 struct SourceFile: Identifiable, Hashable {
     var id: String; var meetingID: String?; var filename: String; var path: String
@@ -84,4 +112,6 @@ enum AppSection: String, CaseIterable, Identifiable {
 struct PendingTranscription: Codable, Identifiable {
     var id: String; var meetingID: String; var path: String; var startSeconds: Double
     var durationSeconds: Double; var error: String?
+    var sourceLanguage: String? = nil; var translationTarget: String? = nil
+    var translationTargets: [String]? = nil
 }

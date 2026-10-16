@@ -23,6 +23,7 @@
 | 模块 | 主要入口 | 职责 |
 | --- | --- | --- |
 | 应用入口与退出 | `Sources/Main.swift` | 主窗口、菜单、进入门禁、正常退出与后台清理 |
+| 应用内更新 | `Sources/AppUpdater.swift`、`Resources/Updates.json`、`scripts/build-update.py` | Sparkle 检查、签名清单与更新归档、延后安装及 GitHub Release 附件 |
 | 引导与权限 | `OnboardingState.swift`、`SystemSetupPermissions.swift`、`PermissionsView.swift` | 真实授权状态与设置流程 |
 | 模型准备 | `ModelPreparation.swift`、`scripts/setup-models.py`、`Resources/ModelCatalog.json` | 独立子进程、状态协议、固定文件下载与校验 |
 | 界面与设计 | `NativeNavigation.swift`、`Views.swift`、`Design.swift` | 侧栏、会议、知识库、问答与回收站 |
@@ -71,13 +72,41 @@
 ## 产品与界面约定
 
 - 优先使用 SwiftUI 的原生侧栏、工具栏、表格、菜单、滚动区与 sheet，保留 Mac 常见操作习惯。
-- 涉及界面时，可使用可用的 SwiftUI Expert 与 ui-ux-pro-max 技能；先读技能，再按本项目实际需求应用。
+- 新增或明显调整界面时，先读取 [SwiftUI Expert](https://github.com/AvdLee/SwiftUI-Agent-Skill)（`swiftui-expert-skill`）与 `ui-ux-pro-max` 技能。前者负责原生 macOS / SwiftUI 实现与 Apple 人机界面规范，后者辅助视觉层次、配色、间距、交互和可访问性；以本项目的桌面架构为准，不套用网页或手机默认布局。
 - 字体、配色、间距优先复用 `Design.swift`。正文基准 16，辅助文字 13；避免用过小字体或截断掩盖布局问题。
 - 保留浅色、深色、系统外观和可访问性标签；较小窗口可以滚动，关键操作必须可达。
 - 欢迎页特效不应妨碍文字阅读、权限设置或日常工作；保留已有动态效果控制与减少动态效果的实现。
 - 转写页以原文为主；已删除片段在本场会议独立面板管理，标明会议及恢复去向。整场会议和资料回收站保持侧栏底部入口。
 - 笔记编辑为 Markdown 源码，完成后渲染；切换会议、侧栏、关闭或退出仍走保存保护。
 - 每场会议的名称、转写、笔记、摘要和附件始终关联正确的 `meeting_id`，不让界面选择与实际数据范围脱节。
+
+### 开发任务的技能使用
+
+开始任务时按下表匹配技能；符合适用范围时必须先读取对应 `SKILL.md`，再把其中的工作方法用于方案、实现与验证，无需用户再次点名。
+
+| 技能 | 适用任务与实际产出 | 本机用户级入口 |
+| --- | --- | --- |
+| `swiftui-expert-skill` | 编写、重构或审查 SwiftUI / macOS 代码；落实原生控件、状态流、布局、可访问性及系统版本兼容 | `~/.agents/skills/swiftui-expert-skill/SKILL.md` |
+| `ui-ux-pro-max` | 新增或明显调整界面、改善视觉与交互；形成与现有设计一致的层次、配色、字体、间距和状态方案，需要检索实现建议时选择 `swiftui` 栈 | `~/.agents/skills/ui-ux-pro-max/SKILL.md` |
+| `reverse-engineer-anything` | 研究指定参考应用的已发布功能、应用包或二进制；通过 REA 获取证据，形成行为说明、实现方案与验收条件 | `~/.agents/skills/reverse-engineer-anything/SKILL.md` |
+
+- 技能是实际工作的执行指导，不能只提及名称或把“已读取”当作完成开发。参考应用研究按需进行；界面方案确定后，继续完成代码实现与相应验证。
+- 优先使用当前会话技能清单提供的实际入口；表中路径用于本机查找，路径变化时核对现有安装，不重复维护多份技能。REA 还需调用已连接的 MCP 工具，不能用技能说明替代真实分析。
+- 交付时简要说明实际使用的技能、对应产出与验证结果；遇到不可用项如实说明，并继续完成不依赖该项的工作。
+
+### 界面设计与视觉验证
+
+- 改动前明确目标页面、主要任务、信息层次与参考依据；优先沿用现有原生结构、系统字体、SF Symbols 和 `Design.swift`，再确定需要调整的部分。
+- 实现后查看实际运行窗口，检查浅色、深色、窗口缩放、中文长文本、空状态、加载与错误状态，以及键盘焦点和关键操作可达性。验证范围与本次改动匹配，不能仅用编译成功或效果图证明视觉合格。
+- 技能采用用户级安装即可；Codex 可从 `~/.agents/skills/` 发现共享技能。缺少技能时先说明并补齐已获授权的配置，不把文档中提到技能当作已经安装或实际使用的证据。
+
+### 参考应用功能研究（REA）
+
+- 需要理解其他应用已发布功能的实现、交互背后的状态变化，或在缺少完整源码时分析应用包、原生二进制、Electron / JavaScript 时，使用官方 [REA · Reverse Engineer Anything](https://github.com/morluto/rea) 及配套 `reverse-engineer-anything` 技能。普通源码阅读与业务逻辑分析仍使用仓库工具。
+- REA 负责收集参考应用的实现证据；SwiftUI Expert 与 ui-ux-pro-max 负责把适合的行为落实为知会的原生界面。先确定本次目标应用、版本、具体功能和研究问题，再从小范围静态分析开始；确有缺口时，在已授权范围内补充运行时观察。
+- 区分 REA CLI、MCP 注册、配套技能和原生分析引擎是否可用。原生反编译还需要已配置的 Ghidra、Hopper 或 IDA；只有技能文件不能证明工具可调用。遇到缺失或连接问题时使用 `rea doctor --client codex --skill --json`，配置修复先查看限定客户端的安装计划，并保留原配置备份。
+- 研究结果列明目标身份、实际观察、推断、未知项及对应证据；静态分析不冒充运行验证，反编译伪代码不冒充原始源码。把结论转为适合本项目的行为说明、独立实现方案和验收条件，再修改代码。
+- 分析使用任务已明确授权的目标及项目内独立 `work/<本次任务>/` 输出目录；不把日常会议、录音、访问令牌或其他私人资料作为参考应用研究输入。引用外部代码与资源时保留其来源和适用许可。
 
 ## 关键实现约束
 
@@ -97,6 +126,7 @@
 - 升级旧开发版的模型只按固定清单验证后复制，不移动或删除原权重，不复制未核验的任意文件。日常会议资料保留，验证仍使用隔离目录。
 - 发布前审计所有原生组件的实际系统最低版本、外部依赖与签名。系统要求以最终包审计为准，不把主 Swift 文件的编译目标当作全部依赖的最低系统版本。
 - App 分发第三方运行环境与依赖时保留许可和元数据。FFmpeg 同步提供对应源码与构建配置；本项目 MIT 许可不替代第三方许可。
+- 更新签名私钥只保存在不提交的保密位置，保留原密钥备份；不得随版本重建公钥或上传私钥。更新清单与归档均签名，版本 build 单调递增；安装沿用正常退出及保存保护，不静默打断录音。发布流程见 `docs/自动更新与发布.md`。
 
 ### 本地模型与进入门禁
 
@@ -146,6 +176,7 @@ npx ctx7@latest docs <返回的库ID> "同一具体问题"
 | 真实模型、鉴权 API 与持久化 | `.venv/bin/python scripts/verify-real-app.py` |
 | 摘要证据与数字准确性 | `.venv/bin/python scripts/verify-summary-quality.py` |
 | 原生开发包构建 | `bash scripts/build-app.sh` |
+| 应用内更新与延后安装 | `bash scripts/test-app-update.sh` |
 | 独立运行路径 | `bash scripts/test-standalone-runtime-swift.sh` |
 | 正式包构建、审计与签名 | `bash scripts/build-standalone.sh` |
 | DMG 打包 | `python3 scripts/build-dmg.py` |

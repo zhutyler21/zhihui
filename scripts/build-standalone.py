@@ -15,7 +15,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = json.loads((ROOT / 'Resources/StandaloneRuntime.json').read_text())
-WORK = ROOT / 'work/standalone-release-v0.5.0'
+WORK = ROOT / 'work/standalone-release-v0.8.0'
 APP = ROOT / 'dist/知会.app'
 
 
@@ -66,6 +66,12 @@ def main():
     if ROOT not in WORK.resolve().parents or ROOT not in APP.resolve().parents:
         raise RuntimeError('Build directories escape the repository.')
     environment = inspect_environment()
+    identity_file = ROOT / 'work/local-signing-identity'
+    identity = os.environ.get('ZHIHUI_SIGNING_IDENTITY', '').strip()
+    if not identity and identity_file.is_file():
+        identity = identity_file.read_text().strip()
+    identity = identity or '-'
+    build_environment = dict(os.environ, ZHIHUI_SIGNING_IDENTITY=identity)
     ffmpeg, archive, ffmpeg_metadata = load_script('build-ffmpeg').build(WORK / 'ffmpeg')
     mlx_wheels, mlx_archive, mlx_metadata = load_script('build-mlx').build()
     if APP.exists():
@@ -75,7 +81,9 @@ def main():
         backups = WORK / 'build-backups'
         backups.mkdir(exist_ok=True)
         APP.rename(backups / ('知会-' + uuid.uuid4().hex + '.app'))
-    subprocess.run(['bash', str(ROOT / 'scripts/build-app.sh')], cwd=ROOT, check=True)
+    # Standalone release always uses this audited destination, never a QA override.
+    build_environment.pop('ZHIHUI_APP_OUTPUT', None)
+    subprocess.run(['bash', str(ROOT / 'scripts/build-app.sh')], cwd=ROOT, env=build_environment, check=True)
     runtime = APP / 'Contents/Resources/Runtime'
     runtime.mkdir()
     destination = runtime / 'python'
@@ -131,7 +139,7 @@ def main():
     shutil.copy2(ffmpeg, runtime / 'bin/ffmpeg')
     resources = APP / 'Contents/Resources'
     shutil.copy2(ROOT / 'LICENSE', resources / 'LICENSE')
-    shutil.copytree(ROOT / 'docs/licenses', resources / 'ThirdPartyLicenses')
+    shutil.copytree(ROOT / 'docs/licenses', resources / 'ThirdPartyLicenses', dirs_exist_ok=True)
     shutil.copy2(destination / 'lib/python3.12/LICENSE.txt', resources / 'ThirdPartyLicenses/Python-PSF.txt')
     shutil.copy2(archive.parent / ('ffmpeg-' + CONFIG['ffmpeg_version']) / 'COPYING.LGPLv2.1',
                  resources / 'ThirdPartyLicenses/FFmpeg-LGPLv2.1.txt')
@@ -156,6 +164,8 @@ def main():
         '本软件调用 FFmpeg 音频转换程序（LGPL-2.1-or-later）；未开启 GPL、nonfree 或网络功能。\n'
         'FFmpeg 完整对应源码与构建配置位于 ThirdPartySources，可自行重新构建该可执行文件。\n'
         '模型仅在用户开始准备时下载，存储在用户资料目录，不包含在应用包中。\n')
+    with (resources / 'ThirdPartyNotices.txt').open('a') as notices:
+        notices.write('应用内更新使用 Sparkle（MIT），许可见 ThirdPartyLicenses/Sparkle.txt。\n')
     info_path = APP / 'Contents/Info.plist'
     info = plistlib.loads(info_path.read_bytes())
     info.pop('ZhihuiProjectRoot', None)
@@ -181,10 +191,12 @@ def main():
     info_path.write_bytes(plistlib.dumps(info))
     print('Signing embedded runtime components…', flush=True)
     for path in APP.rglob('*'):
-        if auditor.macho(path) and path != APP / 'Contents/MacOS/知会':
+        if (auditor.macho(path) and path != APP / 'Contents/MacOS/知会'
+                and APP / 'Contents/Frameworks/Sparkle.framework' not in path.parents):
             subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(path)],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-    subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--entitlements',
+    load_script('setup-sparkle').sign_framework(APP, identity)
+    subprocess.run(['/usr/bin/codesign', '--force', '--sign', identity, '--entitlements',
                     str(ROOT / 'work/native-build/entitlements.plist'), str(APP)], check=True)
     result = auditor.audit(APP)
     result['date'] = datetime.now(ZoneInfo('Asia/Singapore')).isoformat()

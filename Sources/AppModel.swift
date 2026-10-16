@@ -22,7 +22,9 @@ final class AppModel: ObservableObject {
     @Published var alert: UserAlert?; @Published var notice = ""; @Published var jobs: [String: VisibleJob] = [:]
     @Published var search = ""; @Published var searching = false
     @Published var titleDraft = ""; @Published var noteDraft = ""; @Published var noteDirty = false
+    @Published private(set) var noteSaveErrorMessage = ""
     @Published var recording = false; @Published var startingRecording = false
+    @Published private(set) var stoppingRecording = false
     @Published var recordingMode: RecordingMode = .microphone; @Published var recordingStarted: Date?
     @Published var recordingMeetingID: String?; @Published var recordingSeconds: Double = 0
     @Published private var audioQueue = AudioQueueState(); @Published var processingAudio = false
@@ -31,6 +33,7 @@ final class AppModel: ObservableObject {
     @Published var chat: [ChatTurn] = []; @Published private var askSession = AskSessionState(); @Published var askPartial = ""
     @Published var currentCitation: Citation?
     private var recordingTimer: Timer?; private var searchTask: Task<Void, Never>?
+    private var recordingStopWaiters: [CheckedContinuation<Void, Never>] = []
     private var noteSaveTask: Task<Void, Never>?; private var noteMeetingID: String?
     private var noteRevision: UInt64 = 0
     private var audioImportTask: Task<Void, Never>?
@@ -39,10 +42,20 @@ final class AppModel: ObservableObject {
     private var initialLaunchDone = false; private var terminating = false
     private var recordingBaseOffset: Double = 0
     private var recordingChunkIDs: Set<String> = []
+    private var recordingTranslation = TranslationSettings()
+    private var translationPollingTask: Task<Void, Never>?
+    private var detailRefreshTicket = UUID()
+    @Published var translationUpdating = false
+    @Published private(set) var translatingMeetings: Set<String> = []
+    @Published private(set) var finishingMeetings: Set<String> = []
     var pending: [PendingTranscription] { audioQueue.pending }
     var askJobID: String? { askSession.starting ? "starting" : askSession.jobID }
     var isSwitchingMeeting: Bool { selectionState.switching }
-    init(client: APIClient? = nil) { injectedClient = client; if client != nil { ready = true; starting = false } }
+    init(client: APIClient? = nil, audioSnapshot: AudioQueueSnapshot? = nil) {
+        injectedClient = client
+        if let audioSnapshot { audioQueue = AudioQueueState(snapshot: audioSnapshot) }
+        if client != nil { ready = true; starting = false }
+    }
     var api: APIClient { get throws { guard let client = injectedClient ?? host.client, ready else { throw APIError(message: "本地服务尚未连接") }; return client } }
     var modelCaption: String {
         let names = ["asr", "embedding", "llm"]
@@ -89,8 +102,9 @@ final class AppModel: ObservableObject {
             guard selectionState.isCurrent(ticket, id: id) else { return }
             detail = meeting; selectedMeetingID = id; titleDraft = meeting.title; noteDraft = meeting.note
             noteRevision &+= 1
-            noteMeetingID = id; noteDirty = false
+            noteMeetingID = id; noteDirty = false; noteSaveErrorMessage = ""
             trashSegments = deleted
+            monitorTranslations(id)
         } catch {
             if selectionState.isCurrent(ticket, id: id) { selectionState.fail(ticket, id: id, restoreID: selectedMeetingID); showError(error) }
         }
@@ -99,12 +113,13 @@ final class AppModel: ObservableObject {
         guard let id = id ?? selectedMeetingID else { return }
         let ticket = selectionState.ticket
         guard selectedMeetingID == id, selectionState.isCurrent(ticket, id: id) else { return }
+        let refreshTicket = UUID(); detailRefreshTicket = refreshTicket
         let oldTitle = detail?.title
         let capturedNoteRevision = noteRevision, capturedNoteDraft = noteDraft, capturedNoteDirty = noteDirty
         var meeting = Meeting(try await api.call("/api/meetings/\(id)"))
-        guard selectedMeetingID == id, selectionState.isCurrent(ticket, id: id) else { return }
+        guard !Task.isCancelled, detailRefreshTicket == refreshTicket, selectedMeetingID == id, selectionState.isCurrent(ticket, id: id) else { return }
         let deleted = (try await api.call("/api/meetings/\(id)/segments?trash=1")["items"] as? [JSONObject] ?? []).map(Segment.init)
-        if selectedMeetingID == id, selectionState.isCurrent(ticket, id: id) {
+        if !Task.isCancelled, detailRefreshTicket == refreshTicket, selectedMeetingID == id, selectionState.isCurrent(ticket, id: id) {
             if noteRevision == capturedNoteRevision && noteDraft == capturedNoteDraft && !capturedNoteDirty && !noteDirty {
                 noteDraft = meeting.note
             } else {
@@ -119,9 +134,12 @@ final class AppModel: ObservableObject {
         }
     }
     func newMeeting() async {
+        guard !isSwitchingMeeting else { return }
         let ticket = selectionState.begin("creating")
         defer { selectionState.finish(ticket, id: "creating") }
         do {
+            try await saveNotesIfNeeded()
+            guard selectionState.isCurrent(ticket, id: "creating") else { return }
             let meeting = Meeting(try await api.call("/api/meetings", method: "POST", body: [:]))
             try await reloadMeetings()
             guard selectionState.isCurrent(ticket, id: "creating") else { return }
@@ -143,8 +161,8 @@ final class AppModel: ObservableObject {
         catch { showError(error) }
     }
     func noteChanged() {
-        guard noteMeetingID != nil, noteDraft != detail?.note else { return }
-        noteDirty = true; noteSaveTask?.cancel()
+        guard noteMeetingID != nil, noteDirty || noteDraft != detail?.note else { return }
+        noteDirty = true; noteSaveErrorMessage = ""; noteSaveTask?.cancel()
         noteSaveTask = Task {
             try? await Task.sleep(nanoseconds: 900_000_000)
             guard !Task.isCancelled else { return }
@@ -158,10 +176,15 @@ final class AppModel: ObservableObject {
     func saveNotesIfNeeded() async throws {
         while noteDirty, let id = noteMeetingID {
             let text = noteDraft
-            _ = try await api.call("/api/meetings/\(id)", method: "PATCH", body: ["note": text])
+            do {
+                _ = try await api.call("/api/meetings/\(id)", method: "PATCH", body: ["note": text])
+            } catch {
+                if noteMeetingID == id && !Task.isCancelled { noteSaveErrorMessage = error.localizedDescription }
+                throw error
+            }
             if noteMeetingID != id { return }
             if noteDraft == text {
-                noteRevision &+= 1; noteDirty = false
+                noteRevision &+= 1; noteDirty = false; noteSaveErrorMessage = ""
                 if detail?.note != text { detail?.summary = "" }
                 detail?.note = text; notice = "笔记已保存"
             }
@@ -236,12 +259,86 @@ final class AppModel: ObservableObject {
     }
     func summarize() async {
         guard let id = selectedMeetingID else { return }
+        guard recordingMeetingID != id, !pending.contains(where: { $0.meetingID == id }), audioImportMeetingID != id else {
+            alert = UserAlert(title: "原文还在保存", message: "停止录音并等待本场会议的转写完成后，再整理完整纪要。"); return
+        }
+        await summarizeMeeting(id)
+    }
+    private func summarizeMeeting(_ id: String) async {
         do {
             try await saveNotesIfNeeded()
             let result = try await api.call("/api/meetings/\(id)/summarize", method: "POST")
-            _ = try await followJob(result, title: "正在整理中文纪要")
-            try await refreshDetail(id); try await reloadMeetings(); notice = "中文纪要已保存"
+            let saved = try await followJob(result, title: "正在整理中文纪要") as? JSONObject ?? [:]
+            try await refreshDetail(id); try await reloadMeetings()
+            if let warning = saved["title_warning"] as? String, !warning.isEmpty {
+                notice = "中文纪要已保存；\(warning)"
+            } else {
+                notice = saved["title_changed"] as? Bool == true ? "中文纪要与会议名称已保存" : "中文纪要已保存"
+            }
         } catch { showError(error, title: "纪要未完成") }
+    }
+    func finishAndSummarize(_ meetingID: String) async {
+        guard !finishingMeetings.contains(meetingID) else { return }
+        finishingMeetings.insert(meetingID); defer { finishingMeetings.remove(meetingID) }
+        if recordingMeetingID == meetingID { await stopRecording() }
+        while pending.contains(where: { $0.meetingID == meetingID }) || audioImportMeetingID == meetingID {
+            guard !terminating else { return }
+            if pending.first?.error != nil || pending.contains(where: { $0.meetingID == meetingID && $0.error != nil }) {
+                alert = UserAlert(title: "还有原文未完成", message: "音频队列中有转写失败的录音。请先重试失败任务，完成本场转写后再整理纪要。"); return
+            }
+            notice = "正在完成剩余转写，随后整理中文纪要"
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+        }
+        guard !terminating else { return }
+        await summarizeMeeting(meetingID)
+    }
+    func configureTranslation(_ settings: TranslationSettings, meetingID: String) async -> Bool {
+        guard !translationUpdating else { return false }
+        translationUpdating = true
+        defer {
+            translationUpdating = false
+            if !terminating, selectedMeetingID == meetingID { monitorTranslations(meetingID) }
+        }
+        if selectedMeetingID == meetingID {
+            translationPollingTask?.cancel(); detailRefreshTicket = UUID()
+        }
+        do {
+            _ = try await api.call("/api/meetings/\(meetingID)/translation-settings", method: "PATCH", body: ["source_language": settings.sourceLanguage, "target_languages": settings.targetLanguages, "enabled": settings.enabled])
+            try await refreshDetail(meetingID); try await reloadMeetings()
+            notice = settings.enabled ? "已开启本地实时翻译" : "已保存语言设置"
+            return true
+        } catch { showError(error, title: "语言设置未保存"); return false }
+    }
+    func translateMeeting(_ meeting: Meeting) async {
+        guard !translatingMeetings.contains(meeting.id) else { return }
+        translatingMeetings.insert(meeting.id); defer { translatingMeetings.remove(meeting.id) }
+        do {
+            let response = try await api.call("/api/meetings/\(meeting.id)/translate", method: "POST", body: ["target_languages": meeting.translation.targetLanguages])
+            monitorTranslations(meeting.id)
+            let ids = response["job_ids"] as? [String] ?? (response["job_id"] as? String).map { [$0] } ?? []
+            guard !ids.isEmpty else { throw APIError(message: "没有创建译文任务") }
+            var failures = 0.0
+            for id in ids {
+                let result = try await followJob(["job_id": id], title: "正在翻译会议原文") as? JSONObject ?? [:]
+                failures += number(result["failed"])
+            }
+            try await refreshDetail(meeting.id)
+            notice = failures > 0 ? "部分译文未完成，原文已保留，可重试" : "译文已保存到本机"
+        } catch { showError(error, title: "翻译未完成"); try? await refreshDetail(meeting.id) }
+    }
+    private func monitorTranslations(_ meetingID: String) {
+        guard selectedMeetingID == meetingID else { return }
+        translationPollingTask?.cancel()
+        translationPollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, !self.terminating, self.selectedMeetingID == meetingID else { return }
+                do {
+                    try await self.refreshDetail(meetingID)
+                    guard self.detail?.segments.contains(where: { $0.translations.contains { $0.state == "queued" || $0.state == "running" } }) == true else { return }
+                    try await Task.sleep(for: .milliseconds(700))
+                } catch { return }
+            }
+        }
     }
     func exportMeeting() async {
         guard let id = selectedMeetingID else { return }
@@ -337,11 +434,12 @@ final class AppModel: ObservableObject {
         panel.message = "音频在本机处理，原文件保持不变。支持 WAV、AIFF、MP3、M4A 等格式。"
         guard panel.runModal() == .OK else { return }
         let urls = panel.urls; let savedEnd = detail?.segments.map(\.end).max() ?? 0; let dataRoot = host.dataRoot
+        let languages = detail?.translation ?? TranslationSettings()
         importingAudio = true; audioImportMeetingID = id; notice = "正在保存音频到本机"
         audioImportTask = Task {
             let result = await Task.detached(priority: .userInitiated) { AudioImportSpool.copy(urls, into: dataRoot) }.value
             // Captured meeting ownership survives selection changes during a long disk copy.
-            audioQueue.enqueueImports(meetingID: id, paths: result.copiedPaths, savedEnd: savedEnd)
+            audioQueue.enqueueImports(meetingID: id, paths: result.copiedPaths, savedEnd: savedEnd, sourceLanguage: languages.sourceLanguage, translationTargets: languages.enabled ? languages.targetLanguages : [])
             persistPending(); importingAudio = false; audioImportMeetingID = nil
             notice = result.copiedPaths.isEmpty ? "音频未保存" : "音频已保存，准备本地转写"
             if !result.errors.isEmpty { alert = UserAlert(title: "部分音频未保存", message: result.errors.joined(separator: "\n")) }
@@ -350,18 +448,20 @@ final class AppModel: ObservableObject {
     }
     func startRecording() async {
         guard !isSwitchingMeeting else { return }
-        guard let id = selectedMeetingID, !recording, !startingRecording else { return }
+        guard let id = selectedMeetingID, !recording, !startingRecording, !stoppingRecording else { return }
+        guard !finishingMeetings.contains(id) else { return }
         guard audioImportMeetingID != id else { alert = UserAlert(title: "音频正在保存", message: "请等导入音频保存并转写完成，再继续录音。"); return }
         guard !pending.contains(where: { $0.meetingID == id && $0.durationSeconds == 0 }) else {
             alert = UserAlert(title: "音频仍在导入", message: "请等本场会议的导入音频完成，再继续录音，确保时间顺序正确。"); return
         }
         startingRecording = true; recordingMeetingID = id
+        recordingTranslation = detail?.translation ?? TranslationSettings()
         recordingBaseOffset = audioQueue.baseOffset(meetingID: id, savedEnd: detail?.segments.map(\.end).max() ?? 0)
         recordingChunkIDs = []
         do {
             let directory = host.dataRoot.appendingPathComponent("recordings", isDirectory: true)
             let base = recordingBaseOffset
-            try await recorder.start(mode: recordingMode, directory: directory) { [weak self] chunk in
+            try await recorder.start(mode: recordingMode, directory: directory, liveTranslation: recordingTranslation.enabled) { [weak self] chunk in
                 Task { @MainActor in
                     guard let self else { return }
                     self.ingestChunk(chunk, meetingID: id, base: base)
@@ -380,7 +480,18 @@ final class AppModel: ObservableObject {
         } catch { startingRecording = false; recordingMeetingID = nil; if !terminating { showError(error, title: "录音未启动") } }
     }
     func stopRecording() async {
+        // Every visible stop control shares this gate; only one caller drains the recorder.
+        if stoppingRecording {
+            await withCheckedContinuation { recordingStopWaiters.append($0) }
+            return
+        }
         guard recording || startingRecording else { return }
+        stoppingRecording = true
+        defer {
+            stoppingRecording = false
+            let waiters = recordingStopWaiters; recordingStopWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
         recordingTimer?.invalidate(); recordingTimer = nil
         let id = recordingMeetingID; let base = recordingBaseOffset
         let finalChunks = await recorder.stop()
@@ -392,7 +503,7 @@ final class AppModel: ObservableObject {
     }
     private func ingestChunk(_ chunk: AudioChunk, meetingID: String, base: Double) {
         guard recordingChunkIDs.insert(chunk.id).inserted else { return }
-        audioQueue.appendRecording(PendingTranscription(id: chunk.id, meetingID: meetingID, path: chunk.path, startSeconds: base + chunk.startSeconds, durationSeconds: chunk.durationSeconds))
+        audioQueue.appendRecording(PendingTranscription(id: chunk.id, meetingID: meetingID, path: chunk.path, startSeconds: base + chunk.startSeconds, durationSeconds: chunk.durationSeconds, sourceLanguage: recordingTranslation.sourceLanguage, translationTargets: recordingTranslation.enabled ? recordingTranslation.targetLanguages : []))
         persistPending(); resumeAudioQueue()
     }
     private var pendingURL: URL { host.dataRoot.appendingPathComponent("pending-transcriptions.json") }
@@ -419,7 +530,11 @@ final class AppModel: ObservableObject {
             defer { processingAudio = false }
             while !terminating, let item = pending.first, item.error == nil {
                 do {
-                    let response = try await api.call("/api/meetings/\(item.meetingID)/transcribe", method: "POST", body: ["path": item.path, "start_seconds": item.startSeconds, "request_id": item.id])
+                    var body: JSONObject = ["path": item.path, "start_seconds": item.startSeconds, "request_id": item.id]
+                    if let source = item.sourceLanguage { body["source_language"] = source }
+                    if let targets = item.translationTargets { body["translation_targets"] = targets }
+                    else if let target = item.translationTarget { body["translation_target"] = target.isEmpty ? NSNull() : target as Any }
+                    let response = try await api.call("/api/meetings/\(item.meetingID)/transcribe", method: "POST", body: body)
                     let result = try await followJob(response, title: "正在转写录音")
                     guard !terminating else { return }
                     // Subsequent imported files append after the preceding file's measured duration.
@@ -427,6 +542,7 @@ final class AppModel: ObservableObject {
                     let duration = max(number(resultJSON["duration_seconds"]), number((resultJSON["segment"] as? JSONObject)?["end_seconds"]) - item.startSeconds)
                     try audioQueue.complete(item.id, actualDuration: duration)
                     persistPending(); try await reloadMeetings(); try await refreshDetail(item.meetingID)
+                    if resultJSON["translation_job_id"] is String { monitorTranslations(item.meetingID) }
                     notice = recording ? "已转写到 \(timeText(item.startSeconds + max(duration, item.durationSeconds)))，录音继续保存" : (pending.isEmpty ? "录音转写已完成" : "这段录音已转写，继续处理剩余音频")
                 } catch {
                     if !terminating { audioQueue.markError(item.id, message: error.localizedDescription); persistPending() }
@@ -444,6 +560,7 @@ final class AppModel: ObservableObject {
         noteSaveTask?.cancel()
         try await saveNotesIfNeeded()
         terminating = true
+        translationPollingTask?.cancel()
         if let audioImportTask { await audioImportTask.value }
         await stopRecording(); await Task.yield(); persistPending()
         do { try await saveNotesIfNeeded() }

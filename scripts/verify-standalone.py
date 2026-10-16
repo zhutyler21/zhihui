@@ -47,7 +47,7 @@ def main():
     models.mkdir(parents=True)
     catalog = json.loads((rt / 'Resources/ModelCatalog.json').read_text())
     result = {'fixture': str(run), 'checks': [], 'pass': False, 'model_files': [], 'answers': {}}
-    receipt = ROOT / 'work/standalone-release-v0.5.0' / ('portable-' + uuid.uuid4().hex + '.json')
+    receipt = ROOT / 'work/standalone-release-v0.7.1' / ('portable-' + uuid.uuid4().hex + '.json')
     receipt.parent.mkdir(parents=True, exist_ok=True)
     process = None
 

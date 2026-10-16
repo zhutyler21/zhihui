@@ -109,20 +109,26 @@ struct MarkdownNoteSession: Equatable {
     }
     let meetingID: String
     private(set) var mode: Mode = .preview
-    private(set) var saving = false
+    private(set) var pendingPreview: SaveTicket?
+    var saving: Bool { pendingPreview != nil }
     private var generation: UInt64 = 0
 
     init(meetingID: String) { self.meetingID = meetingID }
-    mutating func beginEditing() { guard !saving else { return }; mode = .editing }
+    mutating func beginEditing() {
+        // Resuming input invalidates an older request to switch to preview.
+        generation &+= 1; pendingPreview = nil; mode = .editing
+    }
     mutating func beginSaving(draft: String, currentMeetingID: String?, switching: Bool) -> SaveTicket? {
         guard mode == .editing, !saving, !switching, currentMeetingID == meetingID else { return nil }
-        generation &+= 1; saving = true
-        return SaveTicket(meetingID: meetingID, generation: generation, draft: draft)
+        generation &+= 1
+        let ticket = SaveTicket(meetingID: meetingID, generation: generation, draft: draft)
+        pendingPreview = ticket
+        return ticket
     }
     @discardableResult
     mutating func finishSaving(_ ticket: SaveTicket, succeeded: Bool, currentMeetingID: String?, currentDraft: String, dirty: Bool, switching: Bool) -> Bool {
-        guard ticket.meetingID == meetingID, ticket.generation == generation, saving else { return false }
-        saving = false
+        guard ticket.meetingID == meetingID, ticket.generation == generation, pendingPreview == ticket else { return false }
+        pendingPreview = nil
         guard succeeded, !switching, currentMeetingID == meetingID, currentDraft == ticket.draft, !dirty else {
             mode = .editing; return false
         }

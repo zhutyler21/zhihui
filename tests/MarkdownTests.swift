@@ -89,6 +89,14 @@ struct MarkdownTests {
         require(session.finishSaving(saved, succeeded: true, currentMeetingID: "synthetic-A", currentDraft: "新文本", dirty: false, switching: false), "saved same draft becomes preview")
         require(session.mode == .preview, "successful Done preview")
         session.beginEditing()
+        let blurred = session.beginSaving(draft: "原文", currentMeetingID: "synthetic-A", switching: false)!
+        session.beginEditing()
+        require(!session.saving && session.mode == .editing, "refocusing while autosave waits restores editable source")
+        require(!session.finishSaving(blurred, succeeded: true, currentMeetingID: "synthetic-A", currentDraft: "原文", dirty: false, switching: false), "old blur completion cannot steal a resumed editor even when its text is unchanged")
+        let nextBlur = session.beginSaving(draft: "新原文", currentMeetingID: "synthetic-A", switching: false)!
+        require(session.pendingPreview == nextBlur, "automatic preview keeps meeting-owned draft ticket")
+        require(session.finishSaving(nextBlur, succeeded: true, currentMeetingID: "synthetic-A", currentDraft: "新原文", dirty: false, switching: false), "new blur renders only the latest saved source")
+        session.beginEditing()
         require(session.beginSaving(draft: "x", currentMeetingID: "synthetic-A", switching: true) == nil, "switching disables Done")
 #if MARKDOWN_APP_MODEL_TESTS
         try await actualModelNotesRegression()
@@ -123,6 +131,16 @@ struct MarkdownTests {
         }
         require(threw && model.noteDraft == "FAILSAVE" && model.noteDirty && state.mode == .editing && !state.saving, "actual HTTP failure preserves source and editor")
         require(model.alert?.title == "笔记尚未保存", "actual failure is visible")
+        require(!model.noteSaveErrorMessage.isEmpty, "save failure remains observable when editor views are recreated")
+        require(model.updateNoteDraft(original), "failed draft can be restored to its saved Markdown source")
+        let deadline = Date().addingTimeInterval(4)
+        while model.noteDirty && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        require(!model.noteDirty && model.noteSaveErrorMessage.isEmpty, "existing debounce saves restored source after failure, so automatic preview cannot wait forever")
+        let restored = try await client.call("/api/test/status")
+        require((restored["saved_notes"] as? JSONObject)?["old"] as? String == original, "restored source persisted exactly through automatic retry")
+        require(model.updateNoteDraft("# 恢复后的笔记"), "retry keeps Markdown editable")
+        try await model.saveNotesIfNeeded()
+        require(model.noteSaveErrorMessage.isEmpty && !model.noteDirty, "successful retry clears persistent failure state")
 
         let other = AppModel(client: client)
         await other.selectMeeting("A")

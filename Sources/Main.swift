@@ -24,6 +24,7 @@ struct ZhihuiEntry {
     @StateObject private var model: AppModel
     @StateObject private var setup: OnboardingState
     @StateObject private var models: ModelPreparation
+    @StateObject private var updater = AppUpdater()
     init() {
         let appModel = AppModel()
         _model = StateObject(wrappedValue: appModel)
@@ -40,17 +41,20 @@ struct ZhihuiEntry {
     }
     var body: some Scene {
         WindowGroup("知会", id: "main") {
-            MainSceneContent(model: model, setup: setup, models: models, delegate: delegate)
+            MainSceneContent(model: model, setup: setup, models: models, updater: updater, delegate: delegate)
         }
         .defaultSize(width: 1280, height: 850)
         .defaultPosition(.center)
         .windowResizability(.contentMinSize)
         .windowToolbarStyle(.unified)
             .commands {
-                CommandGroup(replacing: .newItem) { Button("新建会议") { Task { await model.newMeeting() } }.keyboardShortcut("n", modifiers: .command).disabled(!setup.isInMain || !model.ready) }
+                CommandGroup(after: .appInfo) {
+                    Button("检查更新…", action: updater.checkForUpdates).disabled(!updater.canCheckForUpdates)
+                }
+                CommandGroup(replacing: .newItem) { Button("新建会议") { Task { await model.newMeeting() } }.keyboardShortcut("n", modifiers: .command).disabled(!setup.isInMain || !model.ready || model.isSwitchingMeeting) }
                 CommandMenu("会议") {
                     Button("开始录音") { Task { await model.startRecording() } }.keyboardShortcut("r", modifiers: [.command, .shift]).disabled(!setup.isInMain || model.selectedMeetingID == nil || model.recording || !model.ready || model.isSwitchingMeeting)
-                    Button("停止并保存录音") { Task { await model.stopRecording() } }.keyboardShortcut("s", modifiers: [.command, .shift]).disabled(!setup.isInMain || !model.recording)
+                    Button("停止录音并保存") { Task { await model.stopRecording() } }.keyboardShortcut("s", modifiers: [.command, .shift]).disabled(!setup.isInMain || !model.recording || model.stoppingRecording)
                     Divider()
                     Button("导入音频…") { model.importAudio() }.disabled(!setup.isInMain || model.selectedMeetingID == nil || !model.ready || model.recording || model.isSwitchingMeeting)
                     Button("添加本场会议附件…") { model.importFiles(meetingID: model.selectedMeetingID) }.disabled(!setup.isInMain || model.selectedMeetingID == nil || !model.ready || model.isSwitchingMeeting)
@@ -60,7 +64,12 @@ struct ZhihuiEntry {
                     Button("导入 Foresight 记录…") { model.importForesight() }.disabled(!setup.isInMain || !model.ready)
                 }
             }
-        Settings { AppearanceSettingsView() }
+        WindowGroup("实时翻译大屏", id: "translation-display", for: String.self) { $meetingID in
+            if let meetingID, setup.isInMain {
+                TranslationProjectionView(model: model, meetingID: meetingID).id(meetingID)
+            } else { Text("请先在主窗口完成准备，再打开会议大屏").padding(40) }
+        }.defaultSize(width: 1440, height: 900).windowResizability(.contentMinSize)
+        Settings { AppearanceSettingsView(updater: updater) }
     }
 }
 
@@ -68,6 +77,7 @@ private struct MainSceneContent: View {
     @ObservedObject var model: AppModel
     @ObservedObject var setup: OnboardingState
     @ObservedObject var models: ModelPreparation
+    @ObservedObject var updater: AppUpdater
     let delegate: AppDelegate
     @Environment(\.openWindow) private var openWindow
     @Environment(\.scenePhase) private var scenePhase
@@ -85,11 +95,27 @@ private struct MainSceneContent: View {
         }
             .frame(minWidth: 1080, maxWidth: .infinity, minHeight: 700, maxHeight: .infinity)
             .preferredColorScheme(appearanceMode == "light" ? .light : appearanceMode == "dark" ? .dark : nil)
+            .alert("更新已下载，安装已延后", isPresented: $updater.showsDeferredNotice) {
+                Button("知道了", role: .cancel) { }
+            } message: {
+                Text(updater.status)
+            }
             .background(MainWindowAccessor { window in delegate.registerMainWindow(window) }
                 .allowsHitTesting(false).accessibilityHidden(true))
             .task { await models.check(); setup.initialize() }
             .onChange(of: scenePhase) { _, phase in if phase == .active { setup.refresh() } }
             .onAppear {
+                updater.interruptionReason = { [weak model = model, weak models = models] in
+                    if model?.recording == true || model?.startingRecording == true || model?.stoppingRecording == true {
+                        return "请先停止录音并等待保存完成，再更新知会。"
+                    }
+                    if models?.isDownloading == true { return "请先暂停模型下载，再更新知会。" }
+                    if model?.importingAudio == true || model?.isSwitchingMeeting == true || model?.pending.isEmpty == false || model?.jobs.isEmpty == false {
+                        return "请等待当前会议任务完成，再更新知会。"
+                    }
+                    return nil
+                }
+                updater.start()
                 delegate.model = model
                 delegate.models = models
                 let action = openWindow
